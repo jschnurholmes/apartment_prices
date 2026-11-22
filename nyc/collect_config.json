@@ -1,0 +1,16 @@
+{
+  "window_days": 32,
+  "page_size": 500,
+  "keep_free": 1,
+  "raw_retention_months": 24,
+  "circles": {
+    "four-boroughs": {"latitude": 40.7326, "longitude": -73.8941, "radius": 12.65},
+    "staten-island": {"latitude": 40.5707, "longitude": -74.1610, "radius": 7.05}
+  },
+  "passes": [
+    {"name": "active-4boro", "circle": "four-boroughs", "status": "Active"},
+    {"name": "active-si", "circle": "staten-island", "status": "Active"},
+    {"name": "inactive-4boro", "circle": "four-boroughs", "status": "Inactive"},
+    {"name": "inactive-si", "circle": "staten-island", "status": "Inactive"}
+  ]
+}
