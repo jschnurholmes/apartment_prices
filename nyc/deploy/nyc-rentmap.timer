@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily check for the NYC rent map RentCast collection
+
+[Timer]
+OnCalendar=*-*-* 14:00:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+  run|status) ;;
+  *) echo "usage: nyc-rentmap run|status" >&2; exit 2 ;;
+esac
+
+ROOT=/srv/nyc-rentmap
+exec /usr/bin/docker run --rm --name "nyc-rentmap-$1" \
+  --read-only --tmpfs /tmp \
+  --cap-drop ALL --security-opt no-new-privileges \
+  --env-file "$ROOT/secrets/rentcast.env" \
+  -e NYC_RENTMAP_DATA_DIR="$ROOT/data" \
+  -v "$ROOT/repo:$ROOT/repo" \
+  -v "$ROOT/data:$ROOT/data" \
+  -v "$ROOT/secrets/deploy_key:$ROOT/secrets/deploy_key:ro" \
+  -v "$ROOT/secrets/known_hosts:$ROOT/secrets/known_hosts:ro" \
+  nyc-rentmap:latest "$1"

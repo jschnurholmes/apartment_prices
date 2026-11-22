@@ -1,0 +1,10 @@
+[Unit]
+Description=NYC rent map RentCast collection (collects once per billing period)
+Requires=docker.service
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nyc-rentmap run
+TimeoutStartSec=1h
