@@ -98,7 +98,10 @@ class Git:
         return bool(self.out("status", "--porcelain", "--", path))
 
     def sync(self):
-        """Bring the branch level with origin, pushing any local quota commits."""
+        """Bring the branch level with origin, pushing any local quota commits.
+
+        Returns True if commits from origin were brought in.
+        """
         self.run("fetch", "-q", "origin")
         upstream = "origin/" + self.branch
         ahead = int(self.out("rev-list", "--count", upstream + "..HEAD"))
@@ -111,6 +114,7 @@ class Git:
             self.run("merge", "-q", "--ff-only", upstream)
         if ahead:
             self.run("push", "-q", "origin", "HEAD:" + self.branch)
+        return behind > 0
 
     def commit_and_push(self, path, message):
         if self.dirty(path):
@@ -165,6 +169,15 @@ class Git:
         self.run("push", "-q", "--force-with-lease=%s:%s" % (ref, old or ""),
                  "origin", "%s:%s" % (commit, ref))
         return commit
+
+
+def restart_if_updated(pulled):
+    """Re-run this command once after pulling new commits, so it runs the code it pulled."""
+    if pulled and not os.environ.get("NYC_RENTMAP_RESTARTED"):
+        print("pulled new commits; restarting", flush=True)
+        sys.stderr.flush()
+        os.environ["NYC_RENTMAP_RESTARTED"] = "1"
+        os.execv(sys.executable, [sys.executable] + sys.orig_argv[1:])
 
 
 def build_and_publish(repo, data_dir, git, label):
@@ -226,7 +239,7 @@ class Collector:
         if self.git.dirty(self.quota_rel):
             self.git.run("commit", "-q", "-m", "Commit quota changes left by an interrupted run",
                          "--", self.quota_rel)
-        self.git.sync()
+        restart_if_updated(self.git.sync())
         q = self.quota()
         start, _ = q.period(self.today)
         if self.today <= start:
@@ -475,7 +488,7 @@ def main(argv):
         try:
             if argv[0] == "publish":
                 git = Git(repo)
-                git.sync()
+                restart_if_updated(git.sync())
                 build_and_publish(repo, data_dir, git, "manual rebuild")
             else:
                 Collector(repo, data_dir, key).run()
