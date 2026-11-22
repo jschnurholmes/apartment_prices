@@ -19,8 +19,9 @@
       "period_start": "2026-11-21",
       "created": "2026-11-22T14:16:29.393031+00:00",
       "reserved": 23,
-      "spent": 0,
-      "status": "open"
+      "spent": 23,
+      "status": "closed",
+      "closed": "2026-11-22T14:20:36.192465+00:00"
     }
   ]
 }
