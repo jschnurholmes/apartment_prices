@@ -7,9 +7,12 @@ run ledger records the pushed commit, so a restart never reserves twice.  A
 call is marked "sending" before it goes out; after a crash such a call counts
 as spent, and its page is re-sent only if the reservation still has room.
 
-Passes run in the order listed in collect_config.json.  A pass whose pages
-don't fit the remaining quota keeps only what it already fetched.  Any non-200
-response stops the run (errors aren't billed, but the next call would fail too).
+Passes run in the order listed in collect_config.json.  A pass marked
+use_all_quota fetches as many pages as the quota allows even if it can't
+finish.  Any other pass runs only if all of its pages fit; before probing its
+first page, it is skipped if the previous period's total says it won't fit.
+Any non-200 response stops the run (errors aren't billed, but the next call
+would fail too).
 
 Environment:
   RENTCAST_API_KEY      RentCast API key
@@ -236,14 +239,39 @@ class Collector:
         r = self.quota().reservation(self.res_id)
         return (r["reserved"] if r else 0) - self.ledger.billed()
 
+    def capacity(self):
+        """Calls this run may still spend, counting any it has already reserved."""
+        q = self.quota()
+        return (q.state["monthly_limit"] - self.cfg["keep_free"]
+                - q.used(self.today, exclude=self.res_id) - self.ledger.billed())
+
+    def previous_total(self, name):
+        runs = os.path.join(self.data_dir, "runs")
+        for fn in sorted(os.listdir(runs), reverse=True):
+            if not fn.endswith(".json") or fn[:-5] >= self.ledger.s["period_start"]:
+                continue
+            with open(os.path.join(runs, fn)) as f:
+                total = json.load(f)["passes"].get(name, {}).get("total")
+            if total is not None:
+                return total
+        return None
+
     def run_pass(self, p):
         st = self.ledger.s["passes"].setdefault(p["name"], {"status": "pending", "done": []})
         if st["status"] != "pending":
             return
         size = self.cfg["page_size"]
+        use_all = p.get("use_all_quota", False)
         if "total" not in st:
             if 0 in self.ledger.lost_offsets(p["name"]) and self.room() < 1:
                 st["status"] = "incomplete"
+                return self.ledger.save()
+            estimate = None if use_all else self.previous_total(p["name"])
+            if estimate is not None and max(1, math.ceil(estimate / size)) > self.capacity():
+                st["status"] = "skipped"
+                st["estimate"] = estimate
+                print("  %s: last period's %d listings need %d pages; %d calls available"
+                      % (p["name"], estimate, max(1, math.ceil(estimate / size)), self.capacity()))
                 return self.ledger.save()
             if not self.ensure_reserved(self.ledger.billed() + 1):
                 st["status"] = "skipped"
@@ -257,7 +285,11 @@ class Collector:
         lost = self.ledger.lost_offsets(p["name"])
         fresh = [o for o in todo if o not in lost]
         resend = [o for o in todo if o in lost]
-        if fresh and not self.ensure_reserved(self.ledger.billed() + len(fresh)):
+        if fresh and use_all:
+            fresh = fresh[:max(0, min(len(fresh), self.capacity()))]
+            if fresh and not self.ensure_reserved(self.ledger.billed() + len(fresh)):
+                fresh = []
+        elif fresh and not self.ensure_reserved(self.ledger.billed() + len(fresh)):
             st["status"] = "incomplete"
             return self.ledger.save()
         for o in fresh:

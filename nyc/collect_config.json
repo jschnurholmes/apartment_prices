@@ -8,7 +8,7 @@
     "staten-island": {"latitude": 40.5707, "longitude": -74.1610, "radius": 7.05}
   },
   "passes": [
-    {"name": "active-4boro", "circle": "four-boroughs", "status": "Active"},
+    {"name": "active-4boro", "circle": "four-boroughs", "status": "Active", "use_all_quota": true},
     {"name": "active-si", "circle": "staten-island", "status": "Active"},
     {"name": "inactive-4boro", "circle": "four-boroughs", "status": "Inactive"},
     {"name": "inactive-si", "circle": "staten-island", "status": "Inactive"}
