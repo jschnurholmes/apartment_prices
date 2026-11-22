@@ -1,0 +1,158 @@
+{
+  "limit": 10,
+  "calls": [
+    {
+      "n": 1,
+      "started": "2026-11-21T21:24:41.955692+00:00",
+      "params": {
+        "limit": "500",
+        "includeTotalCount": "true",
+        "latitude": "40.6975",
+        "longitude": "-73.9797",
+        "radius": "21.5",
+        "status": "Active",
+        "daysOld": "1:30"
+      },
+      "result": 200,
+      "total_count": "9368",
+      "file": "data/raw/call-01.json",
+      "records": 500
+    },
+    {
+      "n": 2,
+      "started": "2026-11-21T21:26:03.984483+00:00",
+      "params": {
+        "limit": "500",
+        "includeTotalCount": "true",
+        "latitude": "40.650",
+        "longitude": "-73.950",
+        "radius": "3.0",
+        "status": "Active",
+        "daysOld": "1:30"
+      },
+      "result": 200,
+      "total_count": "607",
+      "file": "data/raw/call-02.json",
+      "records": 500
+    },
+    {
+      "n": 3,
+      "started": "2026-11-21T21:26:19.661050+00:00",
+      "params": {
+        "limit": "500",
+        "includeTotalCount": "true",
+        "latitude": "40.755",
+        "longitude": "-73.905",
+        "radius": "2.5",
+        "status": "Active",
+        "daysOld": "1:30"
+      },
+      "result": 200,
+      "total_count": "387",
+      "file": "data/raw/call-03.json",
+      "records": 387
+    },
+    {
+      "n": 4,
+      "started": "2026-11-21T21:26:32.335656+00:00",
+      "params": {
+        "limit": "500",
+        "includeTotalCount": "true",
+        "latitude": "40.8448",
+        "longitude": "-73.8648",
+        "radius": "2.5",
+        "status": "Active",
+        "daysOld": "1:30"
+      },
+      "result": 200,
+      "total_count": "49",
+      "file": "data/raw/call-04.json",
+      "records": 49
+    },
+    {
+      "n": 5,
+      "started": "2026-11-21T21:26:43.035220+00:00",
+      "params": {
+        "limit": "500",
+        "includeTotalCount": "true",
+        "latitude": "40.5795",
+        "longitude": "-74.1502",
+        "radius": "4.0",
+        "status": "Active",
+        "daysOld": "1:30"
+      },
+      "result": 200,
+      "total_count": "75",
+      "file": "data/raw/call-05.json",
+      "records": 75
+    },
+    {
+      "n": 6,
+      "started": "2026-11-21T21:31:07.499347+00:00",
+      "params": {
+        "limit": "500",
+        "includeTotalCount": "true",
+        "latitude": "40.7400",
+        "longitude": "-73.9900",
+        "radius": "1.0",
+        "status": "Active",
+        "daysOld": "1:30"
+      },
+      "result": 200,
+      "total_count": "529",
+      "file": "data/raw/call-06.json",
+      "records": 500
+    },
+    {
+      "n": 7,
+      "started": "2026-11-22T07:30:42.776373+00:00",
+      "params": {
+        "limit": "500",
+        "includeTotalCount": "true",
+        "latitude": "40.7326",
+        "longitude": "-73.8941",
+        "radius": "12.65",
+        "status": "Active",
+        "daysOld": "1:30"
+      },
+      "result": 200,
+      "total_count": "6557",
+      "file": "data/raw/call-07.json",
+      "records": 500
+    },
+    {
+      "n": 8,
+      "started": "2026-11-22T07:31:20.836609+00:00",
+      "params": {
+        "limit": "500",
+        "includeTotalCount": "true",
+        "latitude": "40.7326",
+        "longitude": "-73.8941",
+        "radius": "12.65",
+        "status": "Inactive",
+        "daysOld": "1:30"
+      },
+      "result": 200,
+      "total_count": "3029",
+      "file": "data/raw/call-08.json",
+      "records": 500
+    },
+    {
+      "n": 9,
+      "started": "2026-11-22T07:31:45.334068+00:00",
+      "params": {
+        "limit": "500",
+        "includeTotalCount": "true",
+        "latitude": "40.5707",
+        "longitude": "-74.1610",
+        "radius": "7.05",
+        "status": "Active",
+        "daysOld": "1:30"
+      },
+      "result": 200,
+      "total_count": "333",
+      "file": "data/raw/call-09.json",
+      "records": 333
+    }
+  ]
+}
