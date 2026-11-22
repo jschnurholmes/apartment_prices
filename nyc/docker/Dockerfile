@@ -6,6 +6,7 @@ ARG GID
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git openssh-client \
  && rm -rf /var/lib/apt/lists/* \
+ && pip install --no-cache-dir numpy==2.4.6 scipy==1.17.1 pillow==13.0.0 \
  && groupadd --gid "$GID" rentmap \
  && useradd --uid "$UID" --gid "$GID" --no-create-home --home-dir /tmp --shell /usr/sbin/nologin rentmap
 

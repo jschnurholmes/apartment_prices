@@ -2,8 +2,8 @@
 set -eu
 
 case "${1:-}" in
-  run|status) ;;
-  *) echo "usage: nyc-rentmap run|status" >&2; exit 2 ;;
+  run|status|publish) ;;
+  *) echo "usage: nyc-rentmap run|status|publish" >&2; exit 2 ;;
 esac
 
 ROOT=/srv/nyc-rentmap

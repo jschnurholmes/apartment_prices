@@ -14,14 +14,20 @@ first page, it is skipped if the previous period's total says it won't fit.
 Any non-200 response stops the run (errors aren't billed, but the next call
 would fail too).
 
+After a successful collection the run publishes: it runs Jeff's v3 build with
+RENTMAP_CITY=nyc into site/, and force-pushes that directory as a single
+commit to the gh-pages branch (skipped if nothing changed).  If publishing
+fails, the next run retries it without collecting again.
+
 Environment:
   RENTCAST_API_KEY      RentCast API key
-  NYC_RENTMAP_DATA_DIR  raw responses (raw/), run ledgers (runs/), and
-                        Jeff's v3 scrape files (v3/apts-<ts>.txt)
+  NYC_RENTMAP_DATA_DIR  raw responses (raw/), run ledgers (runs/), Jeff's v3
+                        scrape files (v3/apts-<ts>.txt), and the built site/
 
 Usage:
   python3 -I collect.py run      collect if this billing period still needs it
   python3 -I collect.py status   show the period, quota, and this period's run
+  python3 -I collect.py publish  rebuild the site and push it to gh-pages
 """
 
 import datetime
@@ -34,6 +40,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 
@@ -77,9 +84,9 @@ class Git:
         self.repo = repo
         self.branch = self.out("rev-parse", "--abbrev-ref", "HEAD")
 
-    def run(self, *args, check=True):
+    def run(self, *args, check=True, env=None):
         p = subprocess.run(["git", "-C", self.repo] + list(args),
-                           capture_output=True, text=True, timeout=300)
+                           capture_output=True, text=True, timeout=300, env=env)
         if check and p.returncode:
             raise RunStop("git %s failed: %s" % (" ".join(args), (p.stderr or p.stdout).strip()))
         return p
@@ -121,6 +128,41 @@ class Git:
         self.run("fetch", "-q", "origin")
         return self.run("merge-base", "--is-ancestor", sha, "origin/" + self.branch,
                         check=False).returncode == 0
+
+    def publish_tree(self, directory, branch, message):
+        """Force-push `directory` as a single commit on `branch`; None if unchanged."""
+        git_dir = self.out("rev-parse", "--absolute-git-dir")
+        with tempfile.TemporaryDirectory() as tmp:
+            env = dict(os.environ, GIT_INDEX_FILE=os.path.join(tmp, "index"))
+            tree = None
+            for args in (["add", "-A", "."], ["write-tree"]):
+                p = subprocess.run(["git", "--git-dir", git_dir, "--work-tree", directory] + args,
+                                   cwd=directory, env=env, capture_output=True, text=True, timeout=600)
+                if p.returncode:
+                    raise RunStop("git %s failed: %s" % (" ".join(args), p.stderr.strip()))
+                tree = p.stdout.strip()
+        if self.run("fetch", "-q", "origin", branch, check=False).returncode == 0:
+            if self.out("rev-parse", "FETCH_HEAD^{tree}") == tree:
+                return None
+        commit = self.out("commit-tree", tree, "-m", message)
+        self.run("push", "-q", "--force", "origin", "%s:refs/heads/%s" % (commit, branch))
+        return commit
+
+
+def build_and_publish(repo, data_dir, git, label):
+    site = os.path.join(data_dir, "site")
+    os.makedirs(site, exist_ok=True)
+    p = subprocess.run([sys.executable, "-B", os.path.join(repo, "build_rentmap.py"),
+                        os.path.join(data_dir, "v3"), site],
+                       cwd=repo, env=dict(os.environ, RENTMAP_CITY="nyc"),
+                       capture_output=True, text=True, timeout=3600)
+    print(p.stdout.strip())
+    if p.returncode:
+        raise RunStop("site build failed: %s" % p.stderr.strip()[-2000:])
+    open(os.path.join(site, ".nojekyll"), "w").close()
+    commit = git.publish_tree(site, "gh-pages", "Publish NYC rent map: %s" % label)
+    print("gh-pages %s" % ("unchanged" if commit is None else "updated to %s" % commit[:10]))
+    return commit or "unchanged"
 
 
 class Ledger:
@@ -180,6 +222,8 @@ class Collector:
             if led["scrape_ts"] and not os.path.exists(self.scrape_path()):
                 self.write_scrape()
             print("period %s already collected: %d calls spent" % (start, r["spent"]))
+            if led["scrape_ts"] and not led.get("published"):
+                self.publish_site()
             return
         for c in led["calls"]:
             if c["state"] == "sending":
@@ -214,6 +258,13 @@ class Collector:
         self.git.commit_and_push(self.quota_rel, "Close RentCast reservation for %s: %d calls spent"
                                  % (start, spent))
         print("spent %d calls for period %s" % (spent, start))
+        self.publish_site()
+
+    def publish_site(self):
+        self.ledger.s["published"] = build_and_publish(
+            self.git.repo, self.data_dir, self.git, "period %s" % self.ledger.s["period_start"])
+        self.ledger.s["published_at"] = now_iso()
+        self.ledger.save()
 
     def ensure_reserved(self, total):
         q = self.quota()
@@ -373,7 +424,7 @@ class Collector:
 
 
 def main(argv):
-    if not argv or argv[0] not in ("run", "status"):
+    if not argv or argv[0] not in ("run", "status", "publish"):
         sys.exit(__doc__)
     data_dir = os.environ.get("NYC_RENTMAP_DATA_DIR")
     if not data_dir:
@@ -391,11 +442,12 @@ def main(argv):
                 s = json.load(f)
             for name, st in s["passes"].items():
                 print("  %-15s %-10s total=%s pages=%s" % (name, st["status"], st.get("total"), st.get("pages")))
+            print("  published: %s" % s.get("published", "not yet"))
         else:
             print("  no run yet this period")
         return
     key = os.environ.get("RENTCAST_API_KEY")
-    if not key:
+    if argv[0] == "run" and not key:
         sys.exit("RENTCAST_API_KEY is not set")
     with open(os.path.join(data_dir, "collect.lock"), "w") as lock:
         try:
@@ -403,7 +455,12 @@ def main(argv):
         except BlockingIOError:
             sys.exit("another collection run is in progress")
         try:
-            Collector(repo, data_dir, key).run()
+            if argv[0] == "publish":
+                git = Git(repo)
+                git.sync()
+                build_and_publish(repo, data_dir, git, "manual rebuild")
+            else:
+                Collector(repo, data_dir, key).run()
         except (RunStop, rentcast_quota.QuotaError) as e:
             sys.exit("run stopped: %s" % e)
 
