@@ -141,9 +141,18 @@ path in `nyc/deploy/nyc-rentmap` before installing it.
 ## Upgrading a Pi set up before publishing existed
 
 Publishing added numpy, scipy, and pillow to the image and a `publish` command
-to the wrapper. On a Pi that already completed the setup above, rebuild the
-image (step 5) and reinstall the wrapper and units (step 6), then do step 9
-after the next run.
+to the wrapper. On a Pi that already completed the setup above:
+
+1. Pull the new code into the clone, which otherwise only updates when a run
+   starts:
+
+   ```bash
+   sudo -u rentmap git -C /srv/nyc-rentmap/repo pull --ff-only
+   ```
+
+2. Rebuild the image (step 5) and reinstall the wrapper and units (step 6).
+3. Publish once with `sudo nyc-rentmap publish`, or wait for the next daily
+   check, then do step 9.
 
 The site build peaked at about 1.5 GB of memory in testing (2000-pixel map).
 Check the Pi has that much free with `free -h`; a 1 or 2 GB Pi may fail or
@@ -152,8 +161,10 @@ swap heavily during the build.
 ## Day to day
 
 - **Code updates** arrive by `git pull` at the start of each run. Changes to
-  `nyc/deploy/` need reinstalling (step 6); changes to `nyc/docker/` need a
-  rebuild (step 5).
+  `nyc/deploy/` need reinstalling (step 6) and changes to `nyc/docker/` need a
+  rebuild (step 5); first pull them with
+  `sudo -u rentmap git -C /srv/nyc-rentmap/repo pull --ff-only`, since the
+  clone may not have them yet.
 - **Manual RentCast calls** made anywhere must be recorded in the committed
   tracker: pull, run `python3 -I nyc/rentcast_quota.py add-usage N --note "..."`,
   commit, and push. To match the dashboard exactly, use
