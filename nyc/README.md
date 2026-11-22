@@ -1,9 +1,12 @@
-# NYC rent map: RentCast collection
+# NYC rent map: RentCast collection and publishing
 
 `collect.py` pulls NYC rental listings from RentCast once per billing period
-and writes them in the format Jeff's v3 build reads (`apts-<ts>.txt`). It runs
-on a Raspberry Pi in a Docker container, started daily by a systemd timer; the
-run does nothing unless the current billing period still needs collecting.
+and writes them in the format Jeff's v3 build reads (`apts-<ts>.txt`). It then
+builds the site with Jeff's `build_rentmap.py` (`RENTMAP_CITY=nyc`, settings in
+`cities/nyc.json`) and pushes it to the `gh-pages` branch as a single commit,
+which GitHub Pages serves. It runs on a Raspberry Pi in a Docker container,
+started daily by a systemd timer; the run does nothing unless the current
+billing period still needs collecting or publishing.
 
 Quota safety: RentCast has no hard cap, so `rentcast_quota.json` (committed)
 is the only guard. Before any call is sent, the run reserves the calls it
@@ -15,7 +18,7 @@ docstrings in `collect.py` and `rentcast_quota.py`.
 | Path | Owner | What |
 |---|---|---|
 | `/srv/nyc-rentmap/repo` | `rentmap` | clone of this fork; the container runs code from here and pushes quota commits |
-| `/srv/nyc-rentmap/data` | `rentmap` | `raw/` gzipped responses (pruned after 24 months), `runs/` local run ledgers, `v3/` scrape files |
+| `/srv/nyc-rentmap/data` | `rentmap` | `raw/` gzipped responses (pruned after 24 months), `runs/` local run ledgers, `v3/` scrape files, `site/` the built site |
 | `/srv/nyc-rentmap/secrets/deploy_key` | `rentmap`, 600 | SSH deploy key with write access to this repo only |
 | `/srv/nyc-rentmap/secrets/known_hosts` | `rentmap`, 644 | GitHub's SSH host keys, copied from `nyc/deploy/known_hosts` |
 | `/srv/nyc-rentmap/secrets/rentcast.env` | `root`, 600 | `RENTCAST_API_KEY=...` |
@@ -128,6 +131,24 @@ path in `nyc/deploy/nyc-rentmap` before installing it.
    Check the schedule with `systemctl list-timers nyc-rentmap.timer` and the
    runs with `journalctl -u nyc-rentmap.service`.
 
+9. After the first run has published (the `gh-pages` branch exists on
+   GitHub), turn on GitHub Pages once: in this repository, **Settings** →
+   **Pages** → under "Build and deployment", set "Source" to
+   **Deploy from a branch**, choose the `gh-pages` branch and the "/(root)"
+   folder, and click **Save**. The site is then at
+   https://jschnurholmes.github.io/apartment_prices/.
+
+## Upgrading a Pi set up before publishing existed
+
+Publishing added numpy, scipy, and pillow to the image and a `publish` command
+to the wrapper. On a Pi that already completed the setup above, rebuild the
+image (step 5) and reinstall the wrapper and units (step 6), then do step 9
+after the next run.
+
+The site build peaked at about 1.5 GB of memory in testing (2000-pixel map).
+Check the Pi has that much free with `free -h`; a 1 or 2 GB Pi may fail or
+swap heavily during the build.
+
 ## Day to day
 
 - **Code updates** arrive by `git pull` at the start of each run. Changes to
@@ -140,3 +161,7 @@ path in `nyc/deploy/nyc-rentmap` before installing it.
 - **A failed run** (non-zero exit, visible in `systemctl --failed`) leaves its
   reservation open, so usage is overstated, never understated; the next daily
   check resumes it.
+- **A failed publish** doesn't undo the collection; the next daily check
+  retries the build and push without spending any calls. To rebuild and
+  republish by hand (for example after changing `cities/nyc.json` or the
+  pages), run `sudo nyc-rentmap publish`.
