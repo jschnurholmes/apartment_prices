@@ -1,0 +1,17 @@
+{
+  "monthly_limit": 50,
+  "billing_anchor": "2026-12-21",
+  "external_usage": [
+    {
+      "date": "2026-11-21",
+      "calls": 6,
+      "note": "development calls from rentcast_ledger.json"
+    },
+    {
+      "date": "2026-11-22",
+      "calls": 3,
+      "note": "development calls from rentcast_ledger.json"
+    }
+  ],
+  "calls": []
+}
