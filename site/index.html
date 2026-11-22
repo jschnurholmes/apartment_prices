@@ -114,15 +114,16 @@
 
 <script>
 "use strict";
-const BOUNDS = { south: 42.255594, west: -71.1828231, north: 42.4351936, east: -70.9758 };
-const CENTER = { lat: 42.3454, lng: -71.0793 };
+let BOUNDS = { south: 42.255594, west: -71.1828231, north: 42.4351936, east: -70.9758 };
+let CENTER = { lat: 42.3454, lng: -71.0793 };
+let ZOOM = 13;
 const SIZE_NAMES = ["Studio", "1BR", "2BR", "3BR", "4BR", "5BR"];
 
 // v2's magma colors, highest price first, and its 2BR dollar thresholds.
 const MAGMA = ["#000003","#07051b","#150e38","#28115a","#3e0f72","#55147d","#6a1c81",
   "#7e2482","#942b80","#aa327d","#c13a76","#d5436d","#e85362","#f4675c","#fb7f5e",
   "#fe9a6a","#ffb27a","#ffcc8f","#fde4a5"];
-const DOLLAR_BUCKETS = [6000,5000,4500,4000,3800,3600,3400,3200,3000,2800,2600,2400,2200,2100,2000,1900,1800,1700];
+let DOLLAR_BUCKETS = [6000,5000,4500,4000,3800,3600,3400,3200,3000,2800,2600,2400,2200,2100,2000,1900,1800,1700];
 const REL_BUCKETS = [2.0,1.75,1.6,1.5,1.4,1.3,1.2,1.15,1.1,1.05,1.0,0.95,0.9,0.85,0.8,0.75,0.7,0.6];
 // Diverging: blue = got cheaper, gray = little change, red = got pricier.
 const DIV = [
@@ -140,9 +141,19 @@ const state = { dates: [], idx: 0, size: 2, mode: "nominal", cmpIdx: 0, cmpReal:
                 opacity: 0.75, fade: true, mask: true, dots: false };
 const cache = {};       // date -> {meta, logv: Float32Array, neff: Uint8Array, dots}
 let trends = null, maskData = null, basemap = null;
-const W = 1000, H = 1000;
+let W = 1000, H = 1000;
 const canvas = document.createElement("canvas");
 canvas.width = W; canvas.height = H;
+
+async function applyCity() {
+  let c;
+  try { c = await getJSON("city.json"); } catch (e) { return; }
+  BOUNDS = c.bounds; CENTER = c.center; ZOOM = c.zoom; W = H = c.map_px;
+  if (c.dollar_buckets) DOLLAR_BUCKETS = c.dollar_buckets;
+  canvas.width = W; canvas.height = H;
+  document.title = c.name + " Rent Map";
+  document.querySelector("h1").textContent = c.name + " rent map";
+}
 
 function hexToRgb(h) { const n = parseInt(h.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; }
 const MAGMA_RGB = MAGMA.map(hexToRgb), DIV_RGB = DIV.map(d => hexToRgb(d.color));
@@ -375,7 +386,7 @@ function popupFor(lat, lng) {
 // ---- basemaps: Google Maps (as on the live site), falling back to Leaflet/OSM
 function googleBasemap() {
   const map = new google.maps.Map(document.getElementById("map"), {
-    zoom: 13, center: CENTER, clickableIcons: false, gestureHandling: "greedy" });
+    zoom: ZOOM, center: CENTER, clickableIcons: false, gestureHandling: "greedy" });
   let overlay = null, info = null;
   const b = new google.maps.LatLngBounds({ lat: BOUNDS.south, lng: BOUNDS.west }, { lat: BOUNDS.north, lng: BOUNDS.east });
   map.addListener("click", e => {
@@ -397,7 +408,7 @@ function googleBasemap() {
 
 function leafletBasemap() {
   document.getElementById("map").replaceChildren();
-  const map = L.map("map").setView([CENTER.lat, CENTER.lng], 13);
+  const map = L.map("map").setView([CENTER.lat, CENTER.lng], ZOOM);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19, attribution: "&copy; OpenStreetMap contributors" }).addTo(map);
   let overlay = null;
@@ -476,6 +487,7 @@ function defaultCmp() {
 }
 
 async function main() {
+  await applyCity();
   state.dates = await getJSON("dates.json");
   state.idx = state.dates.length - 1;
   try { trends = await getJSON("trends.json"); } catch (e) { trends = null; }

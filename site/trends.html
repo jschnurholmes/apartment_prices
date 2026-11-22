@@ -361,6 +361,13 @@ function wireSeg(id, fn) {
   });
 }
 
+fetch("city.json").then(r => r.ok ? r.json() : null).then(c => {
+  if (!c) return;
+  document.title = c.name + " Rent Trends";
+  document.querySelector("h1").textContent = c.name + " rent trends";
+  if (c.source) document.querySelector("p.sub").firstChild.textContent = c.source + ", the same data behind the ";
+}).catch(() => {});
+
 fetch("trends.json").then(r => r.json()).then(t => {
   T = t;
   document.getElementById("cpi-month").textContent = "latest " + (T.cpi_latest_month || "n/a");

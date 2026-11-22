@@ -98,9 +98,6 @@ LOG_LO = math.log(250)
 LOG_HI = math.log(25000)
 VALUE_STEP = 0.0025   # quantization of log rent in output PNGs
 
-M_PER_DEG_LAT = 111132.0
-M_PER_DEG_LON = 111320.0 * math.cos(math.radians((MIN_LAT + MAX_LAT) / 2))
-
 # Places tracked on the trends page.
 PLACES = [
     ("Back Bay", 42.3503, -71.0810),
@@ -140,6 +137,28 @@ PLACES = [
     ("Winthrop", 42.3751, -70.9828),
 ]
 PLACE_RADIUS_M = 300
+
+# RENTMAP_CITY=<name> loads cities/<name>.json in place of the Boston settings.
+CITY = {
+    "name": "Boston",
+    "bounds": {"south": MIN_LAT, "west": MIN_LON, "north": MAX_LAT, "east": MAX_LON},
+    "center": {"lat": 42.3454, "lng": -71.0793},
+    "zoom": 13,
+    "map_px": MAP_PX,
+    "mask": "housing_mask.png",
+    "units": "housing_units.png",
+}
+if os.environ.get("RENTMAP_CITY"):
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "cities",
+                           os.environ["RENTMAP_CITY"] + ".json")) as _f:
+        CITY = json.load(_f)
+    MIN_LAT, MAX_LAT = CITY["bounds"]["south"], CITY["bounds"]["north"]
+    MIN_LON, MAX_LON = CITY["bounds"]["west"], CITY["bounds"]["east"]
+    MAP_PX = CITY["map_px"]
+    PLACES = [tuple(p) for p in CITY["places"]]
+
+M_PER_DEG_LAT = 111132.0
+M_PER_DEG_LON = 111320.0 * math.cos(math.radians((MIN_LAT + MAX_LAT) / 2))
 
 
 def utc_date(ts):

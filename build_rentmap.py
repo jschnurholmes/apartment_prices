@@ -79,8 +79,8 @@ def build_months(ds, out_dir, force):
     params = rentmap.params_dict()
     fit_sm = rentmap.Smoother(rentmap.Grid(rentmap.FIT_PX))
     map_sm = rentmap.Smoother(rentmap.Grid(rentmap.MAP_PX))
-    mask = rentmap.load_mask(os.path.join(HERE, "housing_mask.png"), map_sm.g)
-    units = rentmap.load_units(os.path.join(HERE, "housing_units.png"),
+    mask = rentmap.load_mask(os.path.join(HERE, rentmap.CITY["mask"]), map_sm.g)
+    units = rentmap.load_units(os.path.join(HERE, rentmap.CITY["units"]),
                                map_sm.g)
     done = []
     for si, sc in enumerate(ds.scrapes):
@@ -173,8 +173,11 @@ def main(argv):
     build_trends(out_dir, dates, cpi)
     for fn in os.listdir(os.path.join(HERE, "site")):
         shutil.copy(os.path.join(HERE, "site", fn), os.path.join(out_dir, fn))
-    shutil.copy(os.path.join(HERE, "housing_mask.png"),
+    shutil.copy(os.path.join(HERE, rentmap.CITY["mask"]),
                 os.path.join(out_dir, "housing_mask.png"))
+    atomic_write(os.path.join(out_dir, "city.json"), json.dumps(
+        {k: rentmap.CITY[k] for k in ("name", "bounds", "center", "zoom", "map_px", "dollar_buckets",
+                                      "source") if k in rentmap.CITY}))
     print("built %d months in %.0fs" % (len(dates), time.time() - t0))
 
 

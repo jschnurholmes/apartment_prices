@@ -35,9 +35,10 @@ import rentmap
 MASK_DILATE_M = 100
 
 
-def main(shp_path, out_path="housing_mask.png",
-         units_path="housing_units.png"):
+def main(shp_path, out_path=rentmap.CITY["mask"],
+         units_path=rentmap.CITY["units"]):
     g = rentmap.Grid(rentmap.MAP_PX)
+    counties = set(rentmap.CITY.get("mask_counties", []))
     # Label image: each block with housing gets its own integer id, so we can
     # count its pixels and spread its housing units over them.
     img = Image.new("I", (g.nx, g.ny), 0)
@@ -46,12 +47,17 @@ def main(shp_path, out_path="housing_mask.png",
     sf = shapefile.Reader(shp_path)
     fields = [f[0] for f in sf.fields[1:]]
     housing_idx = fields.index("HOUSING20")
+    state_idx = fields.index("STATEFP20")
+    county_idx = fields.index("COUNTYFP20")
 
     units = [0]       # by label; label 0 = no block
     centroids = [None]
     for shape_rec in sf.iterShapeRecords():
         n_units = shape_rec.record[housing_idx]
         if n_units <= 0:
+            continue
+        if counties and (shape_rec.record[state_idx] +
+                         shape_rec.record[county_idx]) not in counties:
             continue
         shp = shape_rec.shape
         min_lon, min_lat, max_lon, max_lat = shp.bbox
