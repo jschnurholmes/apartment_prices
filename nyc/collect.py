@@ -130,22 +130,40 @@ class Git:
                         check=False).returncode == 0
 
     def publish_tree(self, directory, branch, message):
-        """Force-push `directory` as a single commit on `branch`; None if unchanged."""
+        """Force-push `directory` as a single commit on `branch`; None if unchanged.
+
+        GitHub Pages keeps a custom domain in a CNAME file on the published
+        branch, so that file is carried over from the branch's current commit.
+        """
+        ref = "refs/heads/" + branch
+        p = self.run("ls-remote", "--exit-code", "origin", ref, check=False)
+        if p.returncode not in (0, 2):
+            raise RunStop("git ls-remote failed: %s" % (p.stderr or p.stdout).strip())
+        old = None
+        if p.returncode == 0:
+            self.run("fetch", "-q", "origin", ref)
+            old = self.out("rev-parse", "FETCH_HEAD")
         git_dir = self.out("rev-parse", "--absolute-git-dir")
         with tempfile.TemporaryDirectory() as tmp:
             env = dict(os.environ, GIT_INDEX_FILE=os.path.join(tmp, "index"))
-            tree = None
-            for args in (["add", "-A", "."], ["write-tree"]):
-                p = subprocess.run(["git", "--git-dir", git_dir, "--work-tree", directory] + args,
+
+            def index(*args):
+                p = subprocess.run(["git", "--git-dir", git_dir, "--work-tree", directory] + list(args),
                                    cwd=directory, env=env, capture_output=True, text=True, timeout=600)
                 if p.returncode:
                     raise RunStop("git %s failed: %s" % (" ".join(args), p.stderr.strip()))
-                tree = p.stdout.strip()
-        if self.run("fetch", "-q", "origin", branch, check=False).returncode == 0:
-            if self.out("rev-parse", "FETCH_HEAD^{tree}") == tree:
-                return None
+                return p.stdout.strip()
+
+            index("add", "-A", ".")
+            if old and self.run("cat-file", "-e", old + ":CNAME", check=False).returncode == 0:
+                blob = self.out("rev-parse", old + ":CNAME")
+                index("update-index", "--add", "--cacheinfo", "100644,%s,CNAME" % blob)
+            tree = index("write-tree")
+        if old and self.out("rev-parse", old + "^{tree}") == tree:
+            return None
         commit = self.out("commit-tree", tree, "-m", message)
-        self.run("push", "-q", "--force", "origin", "%s:refs/heads/%s" % (commit, branch))
+        self.run("push", "-q", "--force-with-lease=%s:%s" % (ref, old or ""),
+                 "origin", "%s:%s" % (commit, ref))
         return commit
 
 
