@@ -14,7 +14,9 @@ State lives in rentcast_quota.json:
                   plan activation date; calls are refused until it is set
   external_usage  dated entries for requests made outside the monthly run
                   (development calls, manual calls)
-  calls           requests made by the monthly run, recorded before sending
+  reservations    one per collection run: calls reserved before spending, and
+                  calls spent; an open reservation counts as the larger of the
+                  two, a closed one as what was spent
 
 Only HTTP 200 responses are billed; a call that never got a response counts
 as billed, since it may have been.
@@ -69,7 +71,9 @@ class Quota:
                 self.state = json.load(f)
         else:
             self.state = {"monthly_limit": 50, "billing_anchor": None,
-                          "external_usage": [], "calls": []}
+                          "external_usage": [], "reservations": []}
+        self.state.setdefault("reservations", [])
+        self.state.pop("calls", None)
 
     def save(self):
         tmp = self.path + ".tmp"
@@ -101,35 +105,49 @@ class Quota:
         start, end = self.period(when)
         return sum(e["calls"] for e in self.state["external_usage"] if self._in(e["date"], start, end))
 
-    def run_used(self, when=None):
-        start, end = self.period(when)
-        return sum(1 for c in self.state["calls"]
-                   if self._in(c["started"], start, end) and c.get("billed", True))
+    @staticmethod
+    def _counted(r):
+        return r["spent"] if r["status"] == "closed" else max(r["reserved"], r["spent"])
 
-    def used(self, when=None):
-        return self.external_used(when) + self.run_used(when)
+    def run_used(self, when=None, exclude=None):
+        start, _ = self.period(when)
+        return sum(self._counted(r) for r in self.state["reservations"]
+                   if r["period_start"] == start.isoformat() and r["id"] != exclude)
+
+    def used(self, when=None, exclude=None):
+        return self.external_used(when) + self.run_used(when, exclude)
 
     def remaining(self, when=None):
         return self.state["monthly_limit"] - self.used(when)
 
-    def begin_call(self, params, label=""):
-        """Record a call before sending it; raises QuotaError if none remain."""
-        if self.remaining() < 1:
-            start, end = self.period()
-            raise QuotaError("monthly quota exhausted: %d of %d used in %s to %s"
-                             % (self.used(), self.state["monthly_limit"], start, end))
-        entry = {"id": len(self.state["calls"]) + 1,
-                 "started": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                 "label": label, "params": params, "result": "pending", "billed": True}
-        self.state["calls"].append(entry)
-        self.save()
-        return entry["id"]
+    def reservation(self, res_id):
+        return next((r for r in self.state["reservations"] if r["id"] == res_id), None)
 
-    def finish_call(self, call_id, status, **info):
-        entry = self.state["calls"][call_id - 1]
-        entry["result"] = status
-        entry["billed"] = status == 200
-        entry.update(info)
+    def reserve(self, res_id, total, keep_free=0, when=None):
+        """Raise reservation `res_id` to `total` calls; refuses past the limit."""
+        start, _ = self.period(when)
+        r = self.reservation(res_id)
+        if r is None:
+            r = {"id": res_id, "period_start": start.isoformat(),
+                 "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                 "reserved": 0, "spent": 0, "status": "open"}
+            self.state["reservations"].append(r)
+        if r["status"] != "open":
+            raise QuotaError("reservation %s is already closed" % res_id)
+        other = self.used(when, exclude=res_id)
+        allowed = self.state["monthly_limit"] - keep_free - other
+        if total > allowed:
+            raise QuotaError("reserving %d calls would exceed the limit: %d used elsewhere, "
+                             "%d limit, %d kept free" % (total, other, self.state["monthly_limit"], keep_free))
+        r["reserved"] = max(r["reserved"], total)
+        self.save()
+        return r
+
+    def close(self, res_id, spent):
+        r = self.reservation(res_id)
+        r["spent"] = spent
+        r["status"] = "closed"
+        r["closed"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         self.save()
 
     def set_external(self, n, when=None, note=""):
@@ -175,6 +193,10 @@ def main(argv):
             print("  used before/outside run: %d" % q.external_used(when))
             print("  used by monthly run:     %d" % q.run_used(when))
             print("  remaining:               %d" % q.remaining(when))
+            for r in q.state["reservations"]:
+                if r["period_start"] == start.isoformat():
+                    print("  reservation %s: %s, reserved %d, spent %d"
+                          % (r["id"], r["status"], r["reserved"], r["spent"]))
         elif cmd == "set-anchor":
             _parse_date(args[1])
             q.state["billing_anchor"] = args[1]
