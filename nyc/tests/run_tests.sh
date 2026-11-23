@@ -201,6 +201,12 @@ PASS=$((PASS + $(echo "$out" | grep -c '^PASS')))
 FAIL=$((FAIL + $(echo "$out" | grep -c '^FAIL')))
 echo "$out" | grep -q '^area tests done' || { echo "FAIL area tests didn't finish"; FAIL=$((FAIL + 1)); }
 
+echo "=== 10b. scrape writer: room rentals and same-month duplicates ==="
+out=$("$PY" -I "$T/test_scrape.py" 2>&1); echo "$out"
+PASS=$((PASS + $(echo "$out" | grep -c '^PASS')))
+FAIL=$((FAIL + $(echo "$out" | grep -c '^FAIL')))
+echo "$out" | grep -q '^scrape tests done' || { echo "FAIL scrape tests didn't finish"; FAIL=$((FAIL + 1)); }
+
 echo "=== 11. areas change mid-period: scrape rewritten from raw, site rebuilt ==="
 setup
 out=$(run normal 2026-11-22); echo "$out" | grep -E "RESULT|rebuilding|wrote"
@@ -215,7 +221,7 @@ d["areas"].append({"geoid": "test", "name": "Test Area", "state": "NJ", "housing
 json.dump(d, open(p, "w"))
 PY
 out=$(run normal 2026-11-23); echo "$out" | grep -E "RESULT|restarting|wrote|rebuilding|gh-pages"
-check "restarted onto the new areas and rewrote the scrape from raw, adding the area's 2,016 listings" 'echo "$out" | grep -q "restarting" && echo "$out" | grep -q "(10072 listings)" && [ "$(grep -c "^[0-9]" "$W"/data/v3/apts-*.txt)" = 10072 ]'
+check "restarted onto the new areas and rewrote the scrape from raw, adding the area's 2,016 listings" 'echo "$out" | grep -q "restarting" && echo "$out" | grep -q "(10072 listings;" && [ "$(grep -c "^[0-9]" "$W"/data/v3/apts-*.txt)" = 10072 ]'
 check "forced a full rebuild and republished, without spending calls" 'echo "$out" | grep -q "rebuilding every month" && [ "$(git -C "$W/origin.git" rev-parse gh-pages)" != "$before" ] && grep -q "\"published\": \"[0-9a-f]\{40\}\"" "$W"/data/runs/2026-11-21.json && [ "$(calls)" = 23 ]'
 out=$(run normal 2026-11-24); echo "$out" | grep -E "RESULT|wrote|rebuilding|already"
 check "next day: nothing rewritten or rebuilt" '! echo "$out" | grep -q "wrote" && ! echo "$out" | grep -q "rebuilding" && echo "$out" | grep -q "already collected"'

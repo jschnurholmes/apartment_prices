@@ -56,6 +56,9 @@ import rentcast_quota
 CONFIG = os.path.join(HERE, "collect_config.json")
 CITY_CONFIG = os.path.join(ROOT, "cities", "nyc.json")
 NYC_COUNTIES = {"36005", "36047", "36061", "36081", "36085"}
+ROOM_MAX_SQFT = 200
+ROOM_MAX_RENT = 2000
+ROOM_MAX_RENT_PER_BEDROOM = 400
 
 
 class RunStop(Exception):
@@ -196,14 +199,23 @@ class ScrapeFilter:
     def __init__(self):
         path = os.path.join(ROOT, load_city()["areas"])
         self.areas = city_areas.load(path)
+        rules = {"counties": sorted(NYC_COUNTIES), "dedupe": "bedrooms, rent, location to 5 places",
+                 "rooms": [ROOM_MAX_SQFT, ROOM_MAX_RENT, ROOM_MAX_RENT_PER_BEDROOM]}
         with open(path, "rb") as f:
             self.fingerprint = hashlib.sha256(
-                json.dumps(sorted(NYC_COUNTIES)).encode() + f.read()).hexdigest()[:16]
+                json.dumps(rules, sort_keys=True).encode() + f.read()).hexdigest()[:16]
 
     def keep(self, r):
         if (r.get("stateFips", "") + r.get("countyFips", "")) in NYC_COUNTIES:
             return True
         return city_areas.find(self.areas, r["longitude"], r["latitude"]) is not None
+
+
+def is_room(r):
+    """A room in a shared house, listed under the whole house's bedroom count."""
+    if r.get("squareFootage"):
+        return r["squareFootage"] < ROOM_MAX_SQFT and r["price"] < ROOM_MAX_RENT
+    return r["bedrooms"] >= 3 and r["price"] / r["bedrooms"] < ROOM_MAX_RENT_PER_BEDROOM
 
 
 def scrape_path(data_dir, led):
@@ -222,6 +234,16 @@ def write_scrape(data_dir, led, flt):
                 if not flt.keep(r):
                     continue
                 listings[re.sub(r"\s+", "-", r["id"])] = r
+    rooms = {lid for lid, r in listings.items() if is_room(r)}
+    seen, kept = set(), {}
+    for lid, r in sorted(listings.items()):
+        key = (int(r["bedrooms"]), round(r["price"]), round(r["latitude"], 5), round(r["longitude"], 5))
+        if lid in rooms or key in seen:
+            continue
+        seen.add(key)
+        kept[lid] = r
+    dupes = len(listings) - len(rooms) - len(kept)
+    listings = kept
     lines = ["# RentCast, billing period %s, %d listings\n" % (led["period_start"], len(listings))]
     for lid, r in sorted(listings.items()):
         lines.append("%d %d %s %.6f %.6f\n" % (round(r["price"]), int(r["bedrooms"]), lid,
@@ -230,7 +252,8 @@ def write_scrape(data_dir, led, flt):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     atomic_write(path, "".join(lines).encode())
     led["scrape_filter"] = flt.fingerprint
-    print("wrote %s (%d listings)" % (path, len(listings)))
+    print("wrote %s (%d listings; dropped %d room rentals and %d same-month duplicates)"
+          % (path, len(listings), len(rooms), dupes))
 
 
 def refilter_scrapes(data_dir, flt):

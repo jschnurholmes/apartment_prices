@@ -12,6 +12,8 @@ import rentcast_quota
 
 TOTALS = {("Active", "12.65"): 6557, ("Active", "7.05"): 333,
           ("Inactive", "12.65"): 3029, ("Inactive", "7.05"): 153}
+PASS_OFFSET = {("Active", "12.65"): 0, ("Active", "7.05"): 0.0012,
+               ("Inactive", "12.65"): 0.0024, ("Inactive", "7.05"): 0.0036}
 log_path = os.path.join(data_dir, "fake_calls.log")
 
 
@@ -36,7 +38,8 @@ def fake(url, key, crash_at=None, fail_status=None):
         recs.append({"id": "%s-%s-%s-%d Main St, Apt %d" % (today[:7], q["status"], q["radius"], i, i),
                      "stateFips": "34" if nj else "36", "countyFips": "017" if nj else "047",
                      "price": 2000 + i % 3000 + int(today[5:7]), "bedrooms": i % 4,
-                     "latitude": 40.65 + (i % 100) / 10000, "longitude": -73.95})
+                     "latitude": 40.65 + (i % 100) / 10000,
+                     "longitude": -73.95 + ((i // 100) % 100) / 100000 + PASS_OFFSET[(q["status"], q["radius"])]})
     return 200, {"X-Total-Count": str(total)}, json.dumps(recs).encode()
 
 
