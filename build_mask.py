@@ -20,9 +20,15 @@ Usage:
   #   https://www2.census.gov/geo/tiger/TIGER2020/TABBLOCK20/tl_2020_25_tabblock20.zip
   python3 build_mask.py path/to/tl_2020_25_tabblock20.shp
 
+Several block files (e.g. one per state) can be given; arguments ending in
+.shp are inputs, and any others override the two output paths in order.  A
+city with "mask_counties" or "areas" settings keeps only blocks in those
+counties or with their interior point in those areas.
+
 Requires: pyshp, pillow, numpy, scipy
 """
 
+import os
 import sys
 
 import numpy as np
@@ -30,34 +36,36 @@ import shapefile  # pyshp
 from PIL import Image, ImageDraw
 from scipy import ndimage
 
+import city_areas
 import rentmap
 
 MASK_DILATE_M = 100
 
 
-def main(shp_path, out_path=rentmap.CITY["mask"],
+def main(shp_paths, out_path=rentmap.CITY["mask"],
          units_path=rentmap.CITY["units"]):
     g = rentmap.Grid(rentmap.MAP_PX)
     counties = set(rentmap.CITY.get("mask_counties", []))
+    areas = (city_areas.load(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                          rentmap.CITY["areas"]))
+             if rentmap.CITY.get("areas") else [])
     # Label image: each block with housing gets its own integer id, so we can
     # count its pixels and spread its housing units over them.
     img = Image.new("I", (g.nx, g.ny), 0)
     draw = ImageDraw.Draw(img)
 
-    sf = shapefile.Reader(shp_path)
-    fields = [f[0] for f in sf.fields[1:]]
-    housing_idx = fields.index("HOUSING20")
-    state_idx = fields.index("STATEFP20")
-    county_idx = fields.index("COUNTYFP20")
-
     units = [0]       # by label; label 0 = no block
     centroids = [None]
-    for shape_rec in sf.iterShapeRecords():
-        n_units = shape_rec.record[housing_idx]
+    for shape_rec in (sr for path in shp_paths
+                      for sr in shapefile.Reader(path).iterShapeRecords()):
+        rec = shape_rec.record.as_dict()
+        n_units = rec["HOUSING20"]
         if n_units <= 0:
             continue
-        if counties and (shape_rec.record[state_idx] +
-                         shape_rec.record[county_idx]) not in counties:
+        if ((counties or areas)
+                and rec["STATEFP20"] + rec["COUNTYFP20"] not in counties
+                and not city_areas.find(areas, float(rec["INTPTLON20"]),
+                                        float(rec["INTPTLAT20"]))):
             continue
         shp = shape_rec.shape
         min_lon, min_lat, max_lon, max_lat = shp.bbox
@@ -112,4 +120,5 @@ def main(shp_path, out_path=rentmap.CITY["mask"],
 
 
 if __name__ == "__main__":
-    main(*sys.argv[1:])
+    main([a for a in sys.argv[1:] if a.endswith(".shp")],
+         *[a for a in sys.argv[1:] if not a.endswith(".shp")])
