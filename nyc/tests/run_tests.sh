@@ -48,6 +48,7 @@ add_cname() {
   c=$(git -C "$W/origin.git" -c user.name=gh -c user.email=gh@test commit-tree "$tree" -p gh-pages -m "Create CNAME")
   git -C "$W/origin.git" update-ref refs/heads/gh-pages "$c"
 }
+wd() { git -C "$W/laptop" pull -q --ff-only; git -C "$W/laptop" fetch -q origin; python3 -I "$W/laptop/nyc/watchdog.py" --today "$1" 2>&1; echo "exit=$?"; }
 manual() { (cd "$W/laptop" && git pull -q --ff-only && python3 -I nyc/rentcast_quota.py add-usage "$1" --date "$2" --note test >/dev/null && git commit -qam "manual usage" && git push -q); }
 
 echo "=== 1. normal run, then rerun ==="
@@ -72,6 +73,8 @@ check "rerun same period makes no calls" '[ "$(calls)" = 23 ] && echo "$out" | g
 check "rerun does not republish" '[ "$(git -C "$W/origin.git" rev-parse gh-pages)" = "$before" ]'
 out=$(run publish 2026-11-25); echo "$out" | grep -E "RESULT|gh-pages"
 check "manual publish with nothing changed is skipped" 'echo "$out" | grep -q "gh-pages unchanged" && [ "$(git -C "$W/origin.git" rev-parse gh-pages)" = "$before" ]'
+out=$(wd 2026-11-23); echo "$out"
+check "watchdog passes a collected and published period, past GitHub's CNAME commit" 'echo "$out" | grep -q "^OK: period 2026-11-21: collected (23 calls) and published" && echo "$out" | grep -q "exit=0"'
 check "CNAME added on GitHub is still published" '[ "$(pages_file CNAME)" = "maps.example.test" ]'
 
 echo "=== 1d. GitHub unreachable at publish: nothing pushed ==="
@@ -86,21 +89,31 @@ setup
 mv "$W/pi/cities/nyc_housing_mask.png" "$W/mask.bak"
 out=$(run normal 2026-11-22); echo "$out" | grep -E "RESULT|spent"
 check "collection closed despite build failure" '[ "$(calls)" = 23 ] && [ "$(origin_q)" = "32 closed 23 23" ] && echo "$out" | grep -q "RESULT stopped: site build failed"'
+out=$(wd 2026-11-23); echo "$out"
+check "watchdog fails a collected but unpublished period" 'echo "$out" | grep -q "^FAIL: period 2026-11-21: collected (23 calls) but not published since" && echo "$out" | grep -q "exit=1"'
 check "nothing published, ledger not marked" '[ "$(pages_commits)" = 0 ] && ! grep -q "\"published\"" "$W"/data/runs/2026-11-21.json'
 mv "$W/mask.bak" "$W/pi/cities/nyc_housing_mask.png"
 out=$(run normal 2026-11-23); echo "$out" | grep -E "RESULT|already|gh-pages"
 check "next day publishes without collecting again" '[ "$(calls)" = 23 ] && [ "$(pages_commits)" = 1 ] && echo "$out" | grep -q "already collected"'
+out=$(wd 2026-11-24); echo "$out"
+check "watchdog passes once the retry published" 'echo "$out" | grep -q "^OK: period 2026-11-21: collected" && echo "$out" | grep -q "exit=0"'
 
 echo "=== 2. reset day waits ==="
 setup
 out=$(run normal 2026-11-21); echo "$out" | grep -E 'RESULT|waiting'
 check "no calls on reset day" '[ "$(calls)" = 0 ] && echo "$out" | grep -q waiting'
+out=$(wd 2026-11-22); echo "$out"
+check "watchdog doesn't check before two days after the reset" 'echo "$out" | grep -q "^OK: period 2026-11-21: not checked until 2026-11-23" && echo "$out" | grep -q "exit=0"'
+out=$(wd 2026-11-23); echo "$out"
+check "watchdog fails when no collection started" 'echo "$out" | grep -q "^FAIL: period 2026-11-21: no collection has started" && echo "$out" | grep -q "exit=1"'
 
 echo "=== 3. crash mid-pass, then resume ==="
 setup
 out=$(run crash@6 2026-11-22); echo "$out" | grep RESULT
 check "crash left call 6 marked sending" 'grep -q "\"sending\"" "$W"/data/runs/2026-11-21.json'
 check "origin reservation open, 14 reserved" '[ "$(origin_q)" = "23 open 14 0" ]'
+out=$(wd 2026-11-23); echo "$out"
+check "watchdog fails an unfinished collection" 'echo "$out" | grep -q "^FAIL: period 2026-11-21: collection started but not finished (0 of 14 calls spent)" && echo "$out" | grep -q "exit=1"'
 out=$(run normal 2026-11-22); echo "$out" | grep -E 'RESULT|active-4boro|spent'
 check "resume: lost page counted, not re-sent (no room), pass incomplete" 'echo "$out" | grep -q "active-4boro *incomplete"'
 check "total calls 23 including the lost one" '[ "$(calls)" = 23 ]'

@@ -146,6 +146,23 @@ at least that.
    GitHub. Every push to `gh-pages` starts a Pages deployment run there; a
    failed run means the site wasn't updated.
 
+10. Turn on the watchdog. Every day at 12:17 PM Eastern, a GitHub Actions
+    workflow (`.github/workflows/nyc-watchdog.yml`, running
+    `nyc/watchdog.py`) checks that the current billing period was collected
+    and published. From two days after the reset onward, it fails if not,
+    and GitHub emails you.
+
+    1. In this repository on GitHub, click **Actions**. If GitHub says
+       workflows are turned off for this fork, turn them on there.
+    2. In the left sidebar, click **NYC collection watchdog**, click the
+       **Run workflow** button, leave the branch dropdown on `master`, and
+       click **Run workflow**. The run should succeed; its log starts with
+       `OK:`.
+    3. In your GitHub notification settings, make sure notifications for
+       GitHub Actions are sent by email (failures only is enough). GitHub
+       sends scheduled-workflow notices to whoever last changed the schedule
+       in the workflow file.
+
 ## Updating the Pi
 
 Follow this after pushing any change to `master` that the Pi should run. Run
@@ -342,6 +359,12 @@ timer with `sudo systemctl start nyc-rentmap.timer`.
   ```bash
   python3 -I nyc/rentcast_quota.py set-usage-before-run N --note "match dashboard"
   ```
+- **A watchdog email** means this period's collection or publish didn't
+  happen. The failed run's log on GitHub says which: no collection has
+  started, collection started but not finished, or collected but not
+  published. On the Pi, `journalctl -u nyc-rentmap.service` shows the runs'
+  errors and `sudo nyc-rentmap status` shows the period's state. The
+  watchdog keeps failing daily until the Pi catches up.
 - **A failed run** (non-zero exit, visible in `systemctl --failed`) leaves its
   reservation open, so usage is overstated, never understated; the next daily
   check resumes it.
