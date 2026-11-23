@@ -59,6 +59,11 @@ def update_cpi(out_dir):
             atomic_write(path, body)
     except Exception as e:
         print("CPI fetch failed (%s); using cached copy" % e)
+    return read_cpi(out_dir)
+
+
+def read_cpi(out_dir):
+    path = os.path.join(out_dir, "cpi.csv")
     cpi = {}
     if os.path.exists(path):
         with open(path) as inf:

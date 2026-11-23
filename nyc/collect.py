@@ -454,6 +454,13 @@ def build_and_publish(repo, data_dir, git, label):
     if p.returncode:
         raise RunStop("site build failed: %s" % p.stderr.strip()[-2000:])
     atomic_write(stamp, fingerprint.encode())
+    if market_data.configured() or os.path.isdir(os.path.join(data_dir, "market")):
+        p = subprocess.run([sys.executable, "-B", os.path.join(repo, "nyc", "build_market.py"), data_dir, site],
+                           cwd=repo, env=dict(os.environ, RENTMAP_CITY="nyc"),
+                           capture_output=True, text=True, timeout=600)
+        print(p.stdout.strip())
+        if p.returncode:
+            raise RunStop("market data build failed: %s" % p.stderr.strip()[-2000:])
     open(os.path.join(site, ".nojekyll"), "w").close()
     commit = git.publish_tree(site, "gh-pages", "Publish NYC rent map: %s" % label)
     print("gh-pages %s" % ("unchanged" if commit is None else "updated to %s" % commit[:10]))

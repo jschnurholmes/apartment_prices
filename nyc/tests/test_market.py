@@ -1,10 +1,16 @@
+import io
+import json
+import lzma
 import os
 import sys
+import tarfile
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, HERE)
+import build_market
+import collect
 import market_data as md
 import market_fixture as fx
 
@@ -82,6 +88,36 @@ fewer = se(hook=lambda f, s, a, m, v: "" if f == "medianAskingRent" and m == "20
 check("StreetEasy: 105 of 140 neighborhoods is accepted alone", lambda: not rejects("streeteasy", fewer, None, ""))
 check("StreetEasy: 105 of 140 neighborhoods is rejected beside a full stored copy",
       lambda: rejects("streeteasy", fewer, SE, "far fewer"))
+
+check("pooling: 5 listings is enough for the month's own median", lambda: md.pooled([1000, 2000], [9, 5]) == [(1000, False), (2000, False)])
+check("pooling: 4 listings averages 3 months by listing count", lambda: md.pooled([9000, 1000, 2000, 4000], [50, 10, 6, 4])[3]
+      == ((1000 * 10 + 2000 * 6 + 4000 * 4) / 20, True))
+check("pooling: a month with no listings uses the two before it", lambda: md.pooled([1000, 2000, None], [1, 3, 0])[2] == (1750, True))
+check("pooling: nothing in 3 months is no value", lambda: md.pooled([1000, None, None, None], [9, 0, 0, 0])[3] == (None, False))
+check("pooling: the first month has nothing earlier to use", lambda: md.pooled([1500], [2]) == [(1500, True)])
+
+
+def built():
+    data = {"months": ["2026-09", "2026-10"], "index": {"months": ["2026-10"], "series": {"NYC": [4014.0], "Queens": [None]}},
+            "areas": [{"name": "X", "borough": "Queens", "kind": "neighborhood", "rent": {0: [1994.0, 2026.0], 1: [None, 3000.0]},
+                       "n": {0: [7.0, 2.0], 1: [None, 0.0]}}]}
+    return build_market.streeteasy(data, {"2026-08": 330.0, "2026-09": 331.0})
+
+
+check("site data: $10 steps, thin rents negative, counts whole", lambda: built()["areas"][0]["rent"] == {"0": [1990, -2000], "1": [None, None]}
+      and built()["areas"][0]["n"] == {"0": [7, 2], "1": [0, 0]})
+check("site data: the latest CPI is carried forward", lambda: built()["cpi"] == [331.0, 331.0] and built()["cpi_latest_month"] == "2026-09")
+check("site data: index in $10 steps, gaps kept", lambda: built()["index"]["series"] == {"NYC": [4010], "Queens": [None]})
+
+
+def archived():
+    led = {"period_start": "2026-11-21", "calls": [], "market_data": "0123456789abcdef", "scrape_ts": 1}
+    with tempfile.TemporaryDirectory() as d:
+        tar = tarfile.open(fileobj=io.BytesIO(lzma.decompress(collect.backup_archive(d, led))))
+        return json.load(tar.extractfile("runs/2026-11-21.json"))
+
+
+check("backups leave out the market data mark, so a restore downloads again", lambda: archived() == {"period_start": "2026-11-21", "calls": [], "scrape_ts": 1})
 
 BASE = "http://files.example.test"
 os.environ[md.ZILLOW_VAR] = BASE + "/zillow/zip_rents.csv"

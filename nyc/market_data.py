@@ -30,6 +30,8 @@ INDEX_AREAS = ("NYC", "Manhattan", "Brooklyn", "Queens")
 MAX_BYTES = 100_000_000
 MIN_NYC_ZIPS = 100
 MIN_NEIGHBORHOODS = 100
+MIN_LISTINGS = 5
+POOL_MONTHS = 3
 
 
 class MarketDataError(Exception):
@@ -180,6 +182,24 @@ def coverage(source, p):
         return sum(1 for z in p["zips"].values() if z["nyc"] and z["rent"][-1] is not None)
     return sum(1 for a in p["areas"] if a["kind"] == "neighborhood"
                and any(a["rent"][s][-1] is not None for s in a["rent"]))
+
+
+def pooled(rent, n):
+    """[(value, thin)] per month for one area and size.
+
+    A month with MIN_LISTINGS or more is its own median. A thinner one is the
+    average of the latest POOL_MONTHS months that have a median, weighted by
+    their listing counts, and marked thin.
+    """
+    out = []
+    for t in range(len(rent)):
+        if rent[t] is not None and (n[t] or 0) >= MIN_LISTINGS:
+            out.append((rent[t], False))
+            continue
+        have = [k for k in range(max(0, t - POOL_MONTHS + 1), t + 1) if rent[k] is not None and n[k]]
+        total = sum(n[k] for k in have)
+        out.append((sum(rent[k] * n[k] for k in have) / total, True) if have else (None, False))
+    return out
 
 
 def number(text):

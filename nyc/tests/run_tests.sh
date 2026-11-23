@@ -316,13 +316,14 @@ PORT=$(sed -n 's/.* port \([0-9]*\) .*/\1/p' "$W/http.log")
 mk() { NYC_RENTMAP_ZILLOW_ZIP_RENTS_URL="http://127.0.0.1:$PORT/zillow/zip_rents.csv" NYC_RENTMAP_STREETEASY_RENTALS_URL="http://127.0.0.1:$PORT/streeteasy" run "$1" "$2"; }
 gets() { grep -c '"GET ' "$W/http.log"; }
 out=$(run normal 2026-11-22); echo "$out" | grep RESULT
-check "not configured: no downloads, nothing stored" '[ "$(gets)" = 0 ] && [ ! -e "$W/data/market" ] && echo "$out" | grep -q "RESULT ok"'
+check "not configured: no downloads, nothing stored" '[ "$(gets)" = 0 ] && [ ! -e "$W/data/market" ] && echo "$out" | grep -q "RESULT ok" && ! pages_file streeteasy.json >/dev/null && ! pages_file city.json | grep -q market'
 mv "$W/files/streeteasy/TwoBd/rentalInventory_TwoBd.zip" "$W/held.zip"
 out=$(mk normal 2026-11-23); echo "$out" | grep -E "RESULT|market data"
 check "one file missing: the run fails and names it, after publishing and without spending calls" 'echo "$out" | grep -q "RESULT stopped: market data: streeteasy: rentalInventory_TwoBd.zip: HTTP Error 404" && grep -q "\"published\": \"" "$W"/data/runs/2026-11-21.json && [ "$(calls)" = 23 ]'
 check "the complete source is stored, the incomplete one isn't" '[ -s "$W/data/market/zillow/zip_rents.csv" ] && [ ! -e "$W/data/market/streeteasy" ] && ! grep -q "\"market_data\"" "$W"/data/runs/2026-11-21.json'
 mv "$W/held.zip" "$W/files/streeteasy/TwoBd/rentalInventory_TwoBd.zip"
 out=$(mk normal 2026-11-24); echo "$out" | grep -E "RESULT|market data"
+check "the new data is published, and city.json lists it" 'pages_file streeteasy.json | grep -q "\"Hood 139\"" && pages_file city.json | grep -q "\"market\": \[\"streeteasy\"\]"'
 check "next day: retried, stored and recorded" 'echo "$out" | grep -q "RESULT ok" && [ "$(ls "$W/data/market/streeteasy" | wc -l | tr -d " ")" = 9 ] && grep -q "\"market_data\": \"[0-9a-f]\{16\}\"" "$W"/data/runs/2026-11-21.json && grep -q "\"published\": \"" "$W"/data/runs/2026-11-21.json'
 before=$(gets)
 out=$(mk normal 2026-11-25); echo "$out" | grep RESULT
@@ -335,6 +336,12 @@ check "manual publish: downloads what the period lacks, ten requests" '[ "$(gets
 "$PY" -I "$T/market_fixture.py" "$W/files" 2026-11
 out=$(mk normal 2026-12-22); echo "$out" | grep -E "RESULT|market data"
 check "new period: downloaded again after collecting, ten requests" '[ "$(gets)" = $((before + 20)) ] && echo "$out" | grep -q "streeteasy updated through 2026-11" && [ "$(calls)" = 46 ] && echo "$out" | grep -q "RESULT ok"'
+check "the new period's data is published" 'pages_file streeteasy.json | grep -q "\"2026-11\""'
+rm "$W/files/zillow/zip_rents.csv"; printf 'not a zip' > "$W/files/streeteasy/OneBd/medianAskingRent_OneBd.zip"
+out=$(mk normal 2027-01-22); echo "$out" | grep -E "RESULT|market data"
+check "both sources bad in a new period: the last good data stays published" 'echo "$out" | grep -q "RESULT stopped: market data: " && pages_file streeteasy.json | grep -q "\"2026-11\"" && grep -q "\"published\": \"" "$W"/data/runs/2026-12-21.json && [ "$(git -C "$W/origin.git" log -1 --format=%s gh-pages)" = "Publish NYC rent map: period 2027-01-21" ]'
+out=$(run mainpublish 2027-01-23); echo "$out" | grep -E "RESULT"
+check "settings removed: the data leaves the site" 'echo "$out" | grep -q "RESULT ok" && ! pages_file streeteasy.json >/dev/null && ! pages_file city.json | grep -q market'
 kill $HTTP; wait $HTTP 2>/dev/null
 
 }
