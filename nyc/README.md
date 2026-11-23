@@ -34,7 +34,9 @@ change to `nyc/deploy/`.
 
 Run these on the Pi. Docker must be installed (rootful), and
 `command -v docker` must print `/usr/bin/docker`; if it doesn't, change the
-path in `nyc/deploy/nyc-rentmap` before installing it.
+path in `nyc/deploy/nyc-rentmap` before installing it. The site build peaks
+at about 1.5 GB of memory, so the `available` column of `free -h` should show
+at least that.
 
 1. Create the user and directories:
 
@@ -307,25 +309,6 @@ sudo -u rentmap git -C /srv/nyc-rentmap/repo log --oneline origin/master..HEAD
 To back out of a rebase at any point, run
 `sudo -u rentmap git -C /srv/nyc-rentmap/repo rebase --abort`, and resume the
 timer with `sudo systemctl start nyc-rentmap.timer`.
-
-### First update after publishing was added
-
-A Pi set up before publishing existed needs three extra things, because
-publishing added numpy, scipy, and pillow to the image, a `publish` command to
-the wrapper, and the `gh-pages` branch:
-
-1. Before starting, check memory with `free -h`. The site build peaked at
-   about 1.5 GB in testing (2000-pixel map), so the `available` column should
-   show at least that; a 1 or 2 GB Pi may fail or swap heavily.
-2. Don't skip step 6 above: run `sudo nyc-rentmap publish` to build the site
-   from the data already collected and create the `gh-pages` branch. Step 7's
-   `status` should then show `published:` followed by a commit ID.
-3. After step 7, turn on GitHub Pages once. In this repository on GitHub,
-   click **Settings**, then **Pages** in the sidebar. Under
-   "Build and deployment", set "Source" to **Deploy from a branch**, choose
-   `gh-pages` in the branch dropdown, set the folder dropdown to the root of
-   the branch (not `/docs`), and click **Save**. Then open the repository's
-   **Actions** tab and check that the Pages deployment run succeeded.
 
 ## Day to day
 
