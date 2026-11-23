@@ -89,6 +89,9 @@
   th:first-child, td:first-child { text-align: left; }
   th { position: sticky; top: 0; background: var(--surface-1); color: var(--text-secondary); font-weight: 600; }
   a { color: var(--series-1); }
+  #market > h2 { font-size: 19px; margin: 28px 0 2px; }
+  .cardfilter { margin: 0 0 8px; font-size: 13px; color: var(--text-secondary); }
+  .tip .r em { color: var(--text-muted); font-style: normal; }
 </style>
 </head>
 <body>
@@ -149,6 +152,49 @@
     <div class="multiples" id="c-places"></div>
   </section>
 
+  <div id="market" hidden>
+    <h2>Longer history from StreetEasy</h2>
+    <p class="sub">StreetEasy's own listings, separate from the data behind the rent map. Like the listing
+      medians above, its medians describe what's listed, which concentrates in pricier neighborhoods, so they
+      run above the map estimate.  Data Provided by Zillow Group.</p>
+
+    <section class="card">
+      <h2 id="t-index">Rent index</h2>
+      <p class="note">StreetEasy's rent index follows the same homes from one listing to the next, so a change in
+        what happens to be listed doesn't read as a change in rent.  It covers all sizes together.</p>
+      <div class="legend" id="lg-index"></div>
+      <div class="chart" id="c-index"></div>
+      <details><summary>Show every month</summary><div class="tablewrap" id="tb-index"></div></details>
+    </section>
+
+    <section class="card">
+      <h2 id="t-boro">Median asking rent</h2>
+      <p class="note">The median of everything listed in the month.  <span class="thin-note"></span></p>
+      <div class="legend" id="lg-boro"></div>
+      <div class="chart" id="c-boro"></div>
+      <details><summary>Show every month</summary><div class="tablewrap" id="tb-boro"></div></details>
+    </section>
+
+    <section class="card">
+      <h2 id="t-hood">Median asking rent by neighborhood</h2>
+      <div class="cardfilter"><label>Borough <select id="hood-boro"></select></label></div>
+      <p class="note">Each on its own scale, set by the months that aren't faded, so a faded spike can run off the
+        edge; sorted by the latest value, with out-of-date ones last.  StreetEasy draws its own neighborhood
+        boundaries and has none for Staten Island.  <span class="thin-note"></span></p>
+      <div class="multiples" id="c-hood"></div>
+      <p class="note" id="n-hood"></p>
+      <details><summary>Show the latest month</summary><div class="tablewrap" id="tb-hood"></div></details>
+    </section>
+
+    <section class="card">
+      <h2>Homes on the market</h2>
+      <p class="note">Rentals of every size listed on StreetEasy at any point in the month.</p>
+      <div class="legend" id="lg-inv"></div>
+      <div class="chart" id="c-inv"></div>
+      <details><summary>Show every month</summary><div class="tablewrap" id="tb-inv"></div></details>
+    </section>
+  </div>
+
   <section class="card">
     <h2>Data table</h2>
     <details><summary>Show every month</summary><div class="tablewrap" id="table"></div></details>
@@ -163,7 +209,7 @@
 const SIZE_NAMES = ["Studio", "1BR", "2BR", "3BR", "4BR", "5BR"];
 const S = n => `var(--series-${n})`;
 const state = { years: 0, real: false, size: 2 };
-let T = null;
+let T = null, M = null, clipIds = 0;
 
 function money(x) { return x == null || isNaN(x) ? "–" : "$" + (Math.round(x / 10) * 10).toLocaleString("en-US"); }
 function el(tag, attrs, parent) {
@@ -179,7 +225,9 @@ function niceTicks(lo, hi, n) {
   return out;
 }
 
-// Line chart.  series: [{name, color, values}], values aligned with dates.
+// Line chart.  series: [{name, color, values, thin}], values aligned with dates;
+// a stretch touching a month marked in the optional thin array is drawn faded.
+// With opts.clip, lines past yMin or yMax are cut off at the plot's edge.
 function lineChart(root, dates, series, opts) {
   root.replaceChildren();
   const width = root.clientWidth || 600, height = opts.height || 260;
@@ -207,7 +255,30 @@ function lineChart(root, dates, series, opts) {
   }
   el("line", { x1: m.l, x2: width - m.r, y1: height - m.b, y2: height - m.b, stroke: "var(--axis)" }, svg);
 
-  for (const s of series) {
+  let plot = svg;
+  if (opts.clip) {
+    const id = "clip" + (++clipIds);
+    el("rect", { x: m.l - 2, y: m.t - 2, width: width - m.l - m.r + 4, height: height - m.t - m.b + 4 }, el("clipPath", { id }, svg));
+    plot = el("g", { "clip-path": `url(#${id})` }, svg);
+  }
+  for (const s of series.filter(s => s.thin)) {
+    const pt = i => X(dates[i].getTime()).toFixed(1) + "," + Y(s.values[i]).toFixed(1);
+    const has = i => s.values[i] != null && !isNaN(s.values[i]);
+    let solid = "", faded = "";
+    for (let i = 0; i < dates.length; i++) {
+      if (!has(i)) continue;
+      if (has(i + 1)) {
+        const seg = "M" + pt(i) + "L" + pt(i + 1);
+        if (s.thin[i] || s.thin[i + 1]) faded += seg; else solid += seg;
+      } else if (!has(i - 1)) {
+        const dot = "M" + pt(i) + "L" + pt(i);
+        if (s.thin[i]) faded += dot; else solid += dot;
+      }
+    }
+    for (const [d, o] of [[faded, 0.35], [solid, 1]]) if (d) el("path", { d, fill: "none", stroke: s.color,
+      "stroke-width": 2, "stroke-opacity": o, "stroke-linejoin": "round", "stroke-linecap": "round" }, plot);
+  }
+  for (const s of series.filter(s => !s.thin)) {
     let d = "", pen = false;
     s.values.forEach((v, i) => {
       if (v == null || isNaN(v)) { pen = false; return; }
@@ -236,16 +307,18 @@ function lineChart(root, dates, series, opts) {
     const xp = X(dates[i].getTime());
     hair.setAttribute("x1", xp); hair.setAttribute("x2", xp); hair.setAttribute("visibility", "visible");
     tip.replaceChildren();
-    const dd = document.createElement("div"); dd.className = "d"; dd.textContent = T.months[opts.offset + i]; tip.append(dd);
+    const dd = document.createElement("div"); dd.className = "d"; dd.textContent = opts.labels ? opts.labels[i] : T.months[opts.offset + i]; tip.append(dd);
     series.forEach((s, k) => {
       const v = s.values[i], ok = v != null && !isNaN(v);
-      dots[k].setAttribute("visibility", ok ? "visible" : "hidden");
+      dots[k].setAttribute("visibility", ok && !(opts.clip && (v < lo || v > hi)) ? "visible" : "hidden");
       if (ok) { dots[k].setAttribute("cx", xp); dots[k].setAttribute("cy", Y(v)); }
       const r = document.createElement("div"); r.className = "r";
       const key = document.createElement("i"); key.style.background = s.color;
       const b = document.createElement("b"); b.textContent = ok ? opts.yFormatTip(v) : "–";
       const n = document.createElement("span"); n.textContent = s.name;
-      r.append(key, b, n); tip.append(r);
+      r.append(key, b, n);
+      if (ok && s.thin && s.thin[i]) { const e = document.createElement("em"); e.textContent = "few listings"; r.append(e); }
+      tip.append(r);
     });
     tip.style.display = "block";
     const tw = tip.offsetWidth;
@@ -352,12 +425,118 @@ function render() {
   document.getElementById("table").replaceChildren(tbl);
 }
 
+// ---- StreetEasy
+const BOROS = ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"];
+const AREA_COLOR = { NYC: "var(--text-secondary)" };
+BOROS.forEach((b, i) => { AREA_COLOR[b] = S(i + 1); });
+
+function span(months) {
+  let start = 0;
+  if (state.years) {
+    const last = months[months.length - 1], cut = (+last.slice(0, 4) - state.years) + last.slice(4);
+    start = Math.max(0, months.findIndex(m => m >= cut));
+  }
+  const idx = [...Array(months.length - start).keys()].map(i => i + start);
+  return { idx, labels: idx.map(i => months[i]), dates: idx.map(i => new Date(months[i] + "-15T12:00:00")) };
+}
+
+function marketTable(id, head, rows) {
+  const tbl = document.createElement("table"), h = tbl.createTHead().insertRow(), body = tbl.createTBody();
+  head.forEach(t => { const th = document.createElement("th"); th.textContent = t; h.append(th); });
+  rows.forEach(r => { const tr = body.insertRow(); r.forEach(t => { tr.insertCell().textContent = t; }); });
+  document.getElementById(id).replaceChildren(tbl);
+}
+
+function monthRows(sp, series, fmt) {
+  return sp.labels.map((m, j) => [m].concat(series.map(s => fmt(s.values[j]) + (s.thin && s.thin[j] ? "*" : "")))).reverse();
+}
+
+function renderMarket() {
+  if (!M) return;
+  const dollars = state.real ? " (today's dollars)" : "";
+  const size = String(Math.min(state.size, 3)), sizeName = state.size >= 3 ? "3BR+" : SIZE_NAMES[state.size];
+  const factor = cpi => i => state.real && cpi[i] ? M.cpi_latest / cpi[i] : 1;
+  document.querySelectorAll(".thin-note").forEach(n => {
+    n.textContent = "Faded stretches are months with fewer than " + M.min_listings + " listings of this size, shown as a " +
+      "3-month average weighted by listings and marked * in the tables.  StreetEasy's largest size is 3BR+.";
+  });
+
+  let sp = span(M.index.months), f = factor(M.index.cpi);
+  const index = Object.keys(AREA_COLOR).filter(a => M.index.series[a]).map(a => ({ name: a, color: AREA_COLOR[a],
+    values: sp.idx.map(i => M.index.series[a][i] == null ? null : M.index.series[a][i] * f(i)) }));
+  document.getElementById("t-index").textContent = "Rent index" + dollars;
+  legend("lg-index", index);
+  lineChart(document.getElementById("c-index"), sp.dates, index,
+    { yFormat: money, yFormatTip: money, directLabels: true, labels: sp.labels, label: "StreetEasy rent index over time" });
+  marketTable("tb-index", ["Month"].concat(index.map(s => s.name)), monthRows(sp, index, money));
+
+  sp = span(M.months); f = factor(M.cpi);
+  const rentSeries = (a, color) => ({ name: a.name, color,
+    values: sp.idx.map(i => a.rent[size][i] == null ? null : Math.abs(a.rent[size][i]) * f(i)),
+    thin: sp.idx.map(i => a.rent[size][i] < 0) });
+  const wide = Object.keys(AREA_COLOR).map(n => M.areas.find(a => a.kind !== "neighborhood" && a.name === n));
+  const boro = wide.map(a => rentSeries(a, AREA_COLOR[a.name]));
+  document.getElementById("t-boro").textContent = "Median asking rent: " + sizeName + dollars;
+  legend("lg-boro", boro);
+  lineChart(document.getElementById("c-boro"), sp.dates, boro,
+    { yFormat: money, yFormatTip: money, directLabels: true, height: 300, labels: sp.labels, label: "StreetEasy median asking rent by borough" });
+  marketTable("tb-boro", ["Month"].concat(boro.map(s => s.name)), monthRows(sp, boro, money));
+
+  const picked = document.getElementById("hood-boro").value;
+  document.getElementById("t-hood").textContent = "Median asking rent by neighborhood: " + picked + ", " + sizeName + dollars;
+  const hoods = M.areas.filter(a => a.kind === "neighborhood" && a.borough === picked)
+    .map(a => Object.assign(rentSeries(a, AREA_COLOR[picked]), { n: a.n[size] }));
+  const lastVal = p => { for (let i = p.values.length - 1; i >= 0; i--) if (p.values[i] != null) return p.values[i]; return -1; };
+  const current = p => p.values[p.values.length - 1] != null;
+  const shown = hoods.filter(p => lastVal(p) >= 0).sort((a, c) => current(c) - current(a) || lastVal(c) - lastVal(a));
+  const none = hoods.filter(p => lastVal(p) < 0).map(p => p.name);
+  const lastMonth = p => { for (let i = p.values.length - 1; i >= 0; i--) if (p.values[i] != null) return sp.labels[i]; };
+  const wrap = document.getElementById("c-hood"); wrap.replaceChildren();
+  for (const p of shown) {
+    const d = document.createElement("div"); d.className = "m";
+    const h = document.createElement("h3"); h.textContent = p.name;
+    const v = document.createElement("div"); v.className = "v"; v.textContent = "latest " + money(lastVal(p)) +
+      (lastMonth(p) === sp.labels[sp.labels.length - 1] ? "" : " in " + lastMonth(p));
+    const c = document.createElement("div"); c.className = "chart";
+    d.append(h, v, c); wrap.append(d);
+    const solid = p.values.filter((x, i) => x != null && !p.thin[i]), range = solid.length >= 12 ? solid : p.values.filter(x => x != null);
+    const lo = Math.min(...range), hi = Math.max(...range), pad = (hi - lo) * 0.1 || hi * 0.1;
+    lineChart(c, sp.dates, [p], { height: 110, yMin: lo - pad, yMax: hi + pad, yTicks: 3, ml: 44, labels: sp.labels, clip: true,
+      yFormat: v => "$" + (v / 1000).toFixed(1) + "k", yFormatTip: money, label: p.name });
+  }
+  document.getElementById("n-hood").textContent = none.length ? "No " + sizeName + " listings in this range: " + none.join(", ") + "." : "";
+  const last = sp.idx[sp.idx.length - 1], lj = sp.idx.length - 1;
+  marketTable("tb-hood", ["Neighborhood", "Median, " + M.months[last], "Listings"],
+    shown.map(p => [p.name, money(p.values[lj]) + (p.thin[lj] ? "*" : ""), p.n[last].toLocaleString("en-US")]));
+
+  const inv = wide.filter(a => a.name !== "NYC").map(a => ({ name: a.name, color: AREA_COLOR[a.name],
+    values: sp.idx.map(i => Object.keys(a.n).reduce((t, b) => t + a.n[b][i], 0)) }));
+  legend("lg-inv", inv);
+  lineChart(document.getElementById("c-inv"), sp.dates, inv,
+    { yFormat: v => v >= 1000 ? (v / 1000) + "k" : String(v), yFormatTip: v => v.toLocaleString("en-US"),
+      zero: true, directLabels: true, labels: sp.labels, label: "Homes on the market by borough" });
+  marketTable("tb-inv", ["Month"].concat(inv.map(s => s.name)), monthRows(sp, inv, v => v.toLocaleString("en-US")));
+}
+
+function loadMarket() {
+  fetch("streeteasy.json").then(r => r.json()).then(m => {
+    M = m;
+    const sel = document.getElementById("hood-boro");
+    BOROS.filter(b => M.areas.some(a => a.kind === "neighborhood" && a.borough === b)).forEach(b => {
+      const o = document.createElement("option"); o.value = o.textContent = b; sel.append(o);
+    });
+    sel.onchange = renderMarket;
+    document.getElementById("market").hidden = false;
+    renderMarket();
+  }).catch(() => {});
+}
+
 function wireSeg(id, fn) {
   const seg = document.getElementById(id);
   seg.addEventListener("click", e => {
     const btn = e.target.closest("button"); if (!btn) return;
     seg.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === btn ? "true" : "false"));
-    fn(btn); render();
+    fn(btn); render(); renderMarket();
   });
 }
 
@@ -365,6 +544,7 @@ fetch("city.json").then(r => r.ok ? r.json() : null).then(c => {
   if (!c) return;
   document.title = c.name + " Rent Trends";
   document.querySelector("h1").textContent = c.name + " rent trends";
+  if ((c.market || []).includes("streeteasy")) loadMarket();
   if (c.source) document.querySelector("p.sub").firstChild.textContent = c.source + ", the same data behind the ";
 }).catch(() => {});
 
@@ -373,10 +553,10 @@ fetch("trends.json").then(r => r.json()).then(t => {
   document.getElementById("cpi-month").textContent = "latest " + (T.cpi_latest_month || "n/a");
   wireSeg("range", b => { state.years = +b.dataset.years; });
   wireSeg("dollars", b => { state.real = b.dataset.real === "1"; });
-  document.getElementById("size").onchange = e => { state.size = +e.target.value; render(); };
+  document.getElementById("size").onchange = e => { state.size = +e.target.value; render(); renderMarket(); };
   render();
   let w = window.innerWidth;
-  new ResizeObserver(() => { if (Math.abs(window.innerWidth - w) > 20) { w = window.innerWidth; render(); } }).observe(document.body);
+  new ResizeObserver(() => { if (Math.abs(window.innerWidth - w) > 20) { w = window.innerWidth; render(); renderMarket(); } }).observe(document.body);
 });
 </script>
 </body>
