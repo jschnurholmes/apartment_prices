@@ -12,7 +12,7 @@ or these rules rewrites past months' scrapes from their saved raw responses
 and rebuilds the site on the next run. It then
 builds the site with Jeff's `build_rentmap.py` (`RENTMAP_CITY=nyc`, settings in
 `cities/nyc.json`) and pushes it to the `gh-pages` branch as a single commit,
-which GitHub Pages serves. It runs on a Raspberry Pi in a Docker container,
+which GitHub Pages serves. It runs in a Docker container on a Linux server,
 started daily by a systemd timer; the run does nothing unless the current
 billing period still needs collecting or publishing.
 
@@ -21,31 +21,46 @@ is the only guard. Before any call is sent, the run reserves the calls it
 needs in that file, then commits and pushes the reservation. See the
 docstrings in `collect.py` and `rentcast_quota.py`.
 
-## Layout on the Pi
+## Layout on the server
 
 | Path | Owner | What |
 |---|---|---|
-| `/srv/nyc-rentmap/repo` | `rentmap` | clone of this fork; the container runs code from here and pushes quota commits |
-| `/srv/nyc-rentmap/data` | `rentmap` | `raw/` gzipped responses (pruned after 24 months), `runs/` local run ledgers, `v3/` scrape files, `site/` the built site |
-| `/srv/nyc-rentmap/secrets/deploy_key` | `rentmap`, 600 | SSH deploy key with write access to this repo only |
-| `/srv/nyc-rentmap/secrets/known_hosts` | `rentmap`, 644 | GitHub's SSH host keys, copied from `nyc/deploy/known_hosts` |
-| `/srv/nyc-rentmap/secrets/rentcast.env` | `root`, 600 | `RENTCAST_API_KEY=...` |
-| `/srv/nyc-rentmap/secrets/telegram.env` | `root`, 600 | `TELEGRAM_BOT_TOKEN=...` and `TELEGRAM_CHAT_ID=...`, for failure alerts |
-| `/srv/nyc-rentmap/backup` | `rentmap` | clone of the private backup repository; the container pushes `<period>.tar.xz` archives here |
-| `/srv/nyc-rentmap/secrets/backup_key` | `rentmap`, 600 | SSH deploy key with write access to the backup repository only |
-| `/srv/nyc-rentmap/site.env` | `root`, 644 | optional: `RENTMAP_GOATCOUNTER_URL=...`, to count visits with GoatCounter |
+| `$INSTALL_DIR/repo` | `$APP_USER` | clone of this fork; the container runs code from here and pushes quota commits |
+| `$INSTALL_DIR/data` | `$APP_USER` | `raw/` gzipped responses (pruned after 24 months), `runs/` local run ledgers, `v3/` scrape files, `site/` the built site |
+| `$INSTALL_DIR/secrets/deploy_key` | `$APP_USER`, 600 | SSH deploy key with write access to this repo only |
+| `$INSTALL_DIR/secrets/known_hosts` | `$APP_USER`, 644 | GitHub's SSH host keys, copied from `nyc/deploy/known_hosts` |
+| `$INSTALL_DIR/secrets/rentcast.env` | `root`, 600 | `RENTCAST_API_KEY=...` |
+| `$INSTALL_DIR/secrets/telegram.env` | `root`, 600 | `TELEGRAM_BOT_TOKEN=...` and `TELEGRAM_CHAT_ID=...`, for failure alerts |
+| `$INSTALL_DIR/backup` | `$APP_USER` | clone of the private backup repository; the container pushes `<period>.tar.xz` archives here |
+| `$INSTALL_DIR/secrets/backup_key` | `$APP_USER`, 600 | SSH deploy key with write access to the backup repository only |
+| `$INSTALL_DIR/site.env` | `root`, 644 | optional: `RENTMAP_GOATCOUNTER_URL=...`, to count visits with GoatCounter |
 | `/usr/local/sbin/nyc-rentmap` | `root` | wrapper that starts the container (installed copy of `nyc/deploy/nyc-rentmap`) |
 | `/usr/local/sbin/nyc-rentmap-alert` | `root` | sends a Telegram message when a run fails (installed copy of `nyc/deploy/nyc-rentmap-alert`) |
 | `/etc/systemd/system/nyc-rentmap.{service,timer}`, `nyc-rentmap-alert.service` | `root` | installed copies of `nyc/deploy/` |
 
-The container runs as `rentmap` with a read-only filesystem, no capabilities,
+The container runs as `$APP_USER` with a read-only filesystem, no capabilities,
 and only the mounts above. The wrapper and units are copies, so code pulled
 from git never runs as root on the host; reinstall them after reviewing any
 change to `nyc/deploy/`.
 
 ## Setup
 
-Run these on the Pi. Docker must be installed (rootful), and
+Run these on the server, which needs systemd and rootful Docker. First set
+these variables in your shell; every command in this README uses them, so set
+them again in any new shell:
+
+```bash
+INSTALL_DIR=/srv/nyc-rentmap
+APP_USER=rentmap
+REPO=OWNER/NAME
+```
+
+Replace `OWNER/NAME` with your fork of this repository on GitHub. `APP_USER`
+can be any name. `INSTALL_DIR` must stay `/srv/nyc-rentmap` unless you also
+change it in `nyc/deploy/nyc-rentmap` (`ROOT=`),
+`nyc/deploy/nyc-rentmap-alert.service` (`EnvironmentFile=`), and
+`nyc/docker/Dockerfile` (`ENTRYPOINT`).
+
 `command -v docker` must print `/usr/bin/docker`; if it doesn't, change the
 path in `nyc/deploy/nyc-rentmap` before installing it. Likewise,
 `command -v python3` must print `/usr/bin/python3`, the interpreter the
@@ -56,20 +71,20 @@ at least that.
 1. Create the user and directories:
 
    ```bash
-   sudo useradd --system --home-dir /srv/nyc-rentmap --no-create-home --shell /usr/sbin/nologin rentmap
-   sudo install -d -o rentmap -g rentmap -m 750 /srv/nyc-rentmap /srv/nyc-rentmap/data
-   sudo install -d -o rentmap -g rentmap -m 700 /srv/nyc-rentmap/secrets
+   sudo useradd --system --home-dir $INSTALL_DIR --no-create-home --shell /usr/sbin/nologin $APP_USER
+   sudo install -d -o $APP_USER -g $APP_USER -m 750 $INSTALL_DIR $INSTALL_DIR/data
+   sudo install -d -o $APP_USER -g $APP_USER -m 700 $INSTALL_DIR/secrets
    ```
 
 2. Create the deploy key and print its public half:
 
    ```bash
-   sudo -u rentmap ssh-keygen -t ed25519 -N "" -C nyc-rentmap-pi -f /srv/nyc-rentmap/secrets/deploy_key
-   sudo cat /srv/nyc-rentmap/secrets/deploy_key.pub
+   sudo -u $APP_USER ssh-keygen -t ed25519 -N "" -C nyc-rentmap -f $INSTALL_DIR/secrets/deploy_key
+   sudo cat $INSTALL_DIR/secrets/deploy_key.pub
    ```
 
    On GitHub, in this repository: **Settings** → **Deploy Keys** →
-   **Add deploy key**. Put `nyc-rentmap Pi` in the "Title" field, paste the
+   **Add deploy key**. Put `nyc-rentmap` in the "Title" field, paste the
    public key in the "Key" field, select **Allow write access**, and click
    **Add key**.
 
@@ -77,9 +92,9 @@ at least that.
    and switch the remote to SSH with the deploy key:
 
    ```bash
-   sudo -u rentmap git clone https://github.com/jschnurholmes/apartment_prices.git /srv/nyc-rentmap/repo
-   sudo install -o rentmap -g rentmap -m 644 /srv/nyc-rentmap/repo/nyc/deploy/known_hosts /srv/nyc-rentmap/secrets/known_hosts
-   sudo ssh-keygen -lf /srv/nyc-rentmap/secrets/known_hosts
+   sudo -u $APP_USER git clone https://github.com/$REPO.git $INSTALL_DIR/repo
+   sudo install -o $APP_USER -g $APP_USER -m 644 $INSTALL_DIR/repo/nyc/deploy/known_hosts $INSTALL_DIR/secrets/known_hosts
+   sudo ssh-keygen -lf $INSTALL_DIR/secrets/known_hosts
    ```
 
    The fingerprints must be exactly these, which match GitHub's published
@@ -96,11 +111,11 @@ at least that.
    history, so use an address you're comfortable showing:
 
    ```bash
-   sudo -u rentmap git -C /srv/nyc-rentmap/repo remote set-url origin git@github.com:jschnurholmes/apartment_prices.git
-   sudo -u rentmap git -C /srv/nyc-rentmap/repo config core.sshCommand "ssh -i /srv/nyc-rentmap/secrets/deploy_key -o UserKnownHostsFile=/srv/nyc-rentmap/secrets/known_hosts -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes"
-   sudo -u rentmap git -C /srv/nyc-rentmap/repo config user.name "nyc-rentmap (Pi)"
-   sudo -u rentmap git -C /srv/nyc-rentmap/repo config user.email "ADDRESS"
-   sudo -u rentmap git -C /srv/nyc-rentmap/repo fetch origin
+   sudo -u $APP_USER git -C $INSTALL_DIR/repo remote set-url origin git@github.com:$REPO.git
+   sudo -u $APP_USER git -C $INSTALL_DIR/repo config core.sshCommand "ssh -i $INSTALL_DIR/secrets/deploy_key -o UserKnownHostsFile=$INSTALL_DIR/secrets/known_hosts -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes"
+   sudo -u $APP_USER git -C $INSTALL_DIR/repo config user.name "nyc-rentmap"
+   sudo -u $APP_USER git -C $INSTALL_DIR/repo config user.email "ADDRESS"
+   sudo -u $APP_USER git -C $INSTALL_DIR/repo fetch origin
    ```
 
    The `fetch` succeeding confirms the deploy key and host keys work.
@@ -109,23 +124,23 @@ at least that.
    the container):
 
    ```bash
-   sudo install -o root -g root -m 600 /dev/null /srv/nyc-rentmap/secrets/rentcast.env
-   sudoedit /srv/nyc-rentmap/secrets/rentcast.env
+   sudo install -o root -g root -m 600 /dev/null $INSTALL_DIR/secrets/rentcast.env
+   sudoedit $INSTALL_DIR/secrets/rentcast.env
    ```
 
    The file holds one line: `RENTCAST_API_KEY=...`.
 
-5. Build the image, with the container user matching `rentmap`'s IDs:
+5. Build the image, with the container user matching `$APP_USER`'s IDs:
 
    ```bash
-   sudo docker build -t nyc-rentmap:latest --build-arg UID="$(id -u rentmap)" --build-arg GID="$(id -g rentmap)" /srv/nyc-rentmap/repo/nyc/docker
+   sudo docker build -t nyc-rentmap:latest --build-arg UID="$(id -u $APP_USER)" --build-arg GID="$(id -g $APP_USER)" $INSTALL_DIR/repo/nyc/docker
    ```
 
 6. Install the wrapper and systemd units:
 
    ```bash
-   sudo install -m 755 /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap-alert /usr/local/sbin/
-   sudo install -m 644 /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap.service /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap.timer /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap-alert.service /etc/systemd/system/
+   sudo install -m 755 $INSTALL_DIR/repo/nyc/deploy/nyc-rentmap $INSTALL_DIR/repo/nyc/deploy/nyc-rentmap-alert /usr/local/sbin/
+   sudo install -m 644 $INSTALL_DIR/repo/nyc/deploy/nyc-rentmap.service $INSTALL_DIR/repo/nyc/deploy/nyc-rentmap.timer $INSTALL_DIR/repo/nyc/deploy/nyc-rentmap-alert.service /etc/systemd/system/
    sudo systemctl daemon-reload
    ```
 
@@ -199,11 +214,11 @@ at least that.
 
        It prints your chat ID in braces. If the braces are empty, message the
        bot again and rerun the `curl` line.
-    3. Store both on the Pi, readable only by root:
+    3. Store both on the server, readable only by root:
 
        ```bash
-       sudo install -o root -g root -m 600 /dev/null /srv/nyc-rentmap/secrets/telegram.env
-       sudoedit /srv/nyc-rentmap/secrets/telegram.env
+       sudo install -o root -g root -m 600 /dev/null $INSTALL_DIR/secrets/telegram.env
+       sudoedit $INSTALL_DIR/secrets/telegram.env
        ```
 
        The file holds two lines: `TELEGRAM_BOT_TOKEN=...` and
@@ -221,8 +236,8 @@ at least that.
 12. Turn on backups. After each collection, the run commits that period's
     raw RentCast responses and run ledger to a private GitHub repository as
     `<period>.tar.xz` (about 0.5 to 1 MB a month). Everything else can be
-    rebuilt from them; see "Restoring from the backup". On a Pi set up before
-    backups existed, run "Updating the Pi" first, so the installed wrapper
+    rebuilt from them; see "Restoring from the backup". On a server set up
+    before backups existed, run "Updating the server" first, so the installed wrapper
     knows to mount the backup clone.
 
     1. On GitHub, open the create menu in the upper-right corner of any page
@@ -233,28 +248,28 @@ at least that.
        two repositories, so this is a second key) and print its public half:
 
        ```bash
-       sudo -u rentmap ssh-keygen -t ed25519 -N "" -C nyc-rentmap-backup -f /srv/nyc-rentmap/secrets/backup_key
-       sudo cat /srv/nyc-rentmap/secrets/backup_key.pub
+       sudo -u $APP_USER ssh-keygen -t ed25519 -N "" -C nyc-rentmap-backup -f $INSTALL_DIR/secrets/backup_key
+       sudo cat $INSTALL_DIR/secrets/backup_key.pub
        ```
 
        In the new private repository: **Settings** → **Deploy Keys** →
-       **Add deploy key**. Put `nyc-rentmap Pi backups` in the "Title"
+       **Add deploy key**. Put `nyc-rentmap backups` in the "Title"
        field, paste the public key in the "Key" field, select
        **Allow write access**, and click **Add key**.
-    3. Clone it to `/srv/nyc-rentmap/backup` and configure the clone,
+    3. Clone it to `$INSTALL_DIR/backup` and configure the clone,
        replacing `OWNER/REPOSITORY` with the new repository and `ADDRESS`
        with the same commit email as in step 3. Cloning an empty repository
        prints a warning; that's expected.
 
        ```bash
-       sudo -u rentmap env GIT_SSH_COMMAND="ssh -i /srv/nyc-rentmap/secrets/backup_key -o UserKnownHostsFile=/srv/nyc-rentmap/secrets/known_hosts -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes" git clone git@github.com:OWNER/REPOSITORY.git /srv/nyc-rentmap/backup
-       sudo -u rentmap git -C /srv/nyc-rentmap/backup config core.sshCommand "ssh -i /srv/nyc-rentmap/secrets/backup_key -o UserKnownHostsFile=/srv/nyc-rentmap/secrets/known_hosts -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes"
-       sudo -u rentmap git -C /srv/nyc-rentmap/backup config user.name "nyc-rentmap (Pi)"
-       sudo -u rentmap git -C /srv/nyc-rentmap/backup config user.email "ADDRESS"
+       sudo -u $APP_USER env GIT_SSH_COMMAND="ssh -i $INSTALL_DIR/secrets/backup_key -o UserKnownHostsFile=$INSTALL_DIR/secrets/known_hosts -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes" git clone git@github.com:OWNER/REPOSITORY.git $INSTALL_DIR/backup
+       sudo -u $APP_USER git -C $INSTALL_DIR/backup config core.sshCommand "ssh -i $INSTALL_DIR/secrets/backup_key -o UserKnownHostsFile=$INSTALL_DIR/secrets/known_hosts -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes"
+       sudo -u $APP_USER git -C $INSTALL_DIR/backup config user.name "nyc-rentmap"
+       sudo -u $APP_USER git -C $INSTALL_DIR/backup config user.email "ADDRESS"
        ```
 
        The wrapper mounts the clone into the container whenever
-       `/srv/nyc-rentmap/backup` exists.
+       `$INSTALL_DIR/backup` exists.
     4. Back up the periods collected so far by running the daily check now.
        Like its scheduled run, it spends RentCast calls only if the current
        period still needs collecting.
@@ -273,16 +288,16 @@ at least that.
     stays out of this repository, and republish:
 
     ```bash
-    echo 'RENTMAP_GOATCOUNTER_URL=https://CODE.goatcounter.com/count' | sudo tee /srv/nyc-rentmap/site.env
+    echo 'RENTMAP_GOATCOUNTER_URL=https://CODE.goatcounter.com/count' | sudo tee $INSTALL_DIR/site.env
     sudo nyc-rentmap publish
     ```
 
     Every build then adds GoatCounter's script to the pages. To stop
     counting, delete `site.env` and run `sudo nyc-rentmap publish` again.
 
-## Updating the Pi
+## Updating the server
 
-Follow this after pushing any change to `master` that the Pi should run. Run
+Follow this after pushing any change to `master` that the server should run. Run
 every step every time: a daily run may already have pulled the new code, so
 the pull alone can't tell you whether the image or the installed files are out
 of date. Each step is safe to repeat.
@@ -304,22 +319,22 @@ of date. Each step is safe to repeat.
 2. Pull the new code and confirm the clone has it:
 
    ```bash
-   sudo -u rentmap git -C /srv/nyc-rentmap/repo pull --ff-only
-   sudo -u rentmap git -C /srv/nyc-rentmap/repo log -1 --oneline
+   sudo -u $APP_USER git -C $INSTALL_DIR/repo pull --ff-only
+   sudo -u $APP_USER git -C $INSTALL_DIR/repo log -1 --oneline
    ```
 
    The second command must show the newest commit at
-   https://github.com/jschnurholmes/apartment_prices/commits/master. If the
+   `https://github.com/$REPO/commits/master`. If the
    pull fails, follow "If the pull fails" below, then repeat this step.
 
 3. Compare the files that run as root with the installed copies:
 
    ```bash
-   sudo diff -u /usr/local/sbin/nyc-rentmap /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap
-   sudo diff -u /etc/systemd/system/nyc-rentmap.service /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap.service
-   sudo diff -u /etc/systemd/system/nyc-rentmap.timer /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap.timer
-   sudo diff -u /usr/local/sbin/nyc-rentmap-alert /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap-alert
-   sudo diff -u /etc/systemd/system/nyc-rentmap-alert.service /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap-alert.service
+   sudo diff -u /usr/local/sbin/nyc-rentmap $INSTALL_DIR/repo/nyc/deploy/nyc-rentmap
+   sudo diff -u /etc/systemd/system/nyc-rentmap.service $INSTALL_DIR/repo/nyc/deploy/nyc-rentmap.service
+   sudo diff -u /etc/systemd/system/nyc-rentmap.timer $INSTALL_DIR/repo/nyc/deploy/nyc-rentmap.timer
+   sudo diff -u /usr/local/sbin/nyc-rentmap-alert $INSTALL_DIR/repo/nyc/deploy/nyc-rentmap-alert
+   sudo diff -u /etc/systemd/system/nyc-rentmap-alert.service $INSTALL_DIR/repo/nyc/deploy/nyc-rentmap-alert.service
    ```
 
    No output means that file is unchanged. Lines starting with `+` are what
@@ -330,7 +345,7 @@ of date. Each step is safe to repeat.
 4. Rebuild the image:
 
    ```bash
-   sudo docker build -t nyc-rentmap:latest --build-arg UID="$(id -u rentmap)" --build-arg GID="$(id -g rentmap)" /srv/nyc-rentmap/repo/nyc/docker
+   sudo docker build -t nyc-rentmap:latest --build-arg UID="$(id -u $APP_USER)" --build-arg GID="$(id -g $APP_USER)" $INSTALL_DIR/repo/nyc/docker
    ```
 
    If `nyc/docker/` didn't change, Docker reuses its cached layers and this
@@ -339,8 +354,8 @@ of date. Each step is safe to repeat.
 5. Install the wrapper and systemd units:
 
    ```bash
-   sudo install -m 755 /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap-alert /usr/local/sbin/
-   sudo install -m 644 /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap.service /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap.timer /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap-alert.service /etc/systemd/system/
+   sudo install -m 755 $INSTALL_DIR/repo/nyc/deploy/nyc-rentmap $INSTALL_DIR/repo/nyc/deploy/nyc-rentmap-alert /usr/local/sbin/
+   sudo install -m 644 $INSTALL_DIR/repo/nyc/deploy/nyc-rentmap.service $INSTALL_DIR/repo/nyc/deploy/nyc-rentmap.timer $INSTALL_DIR/repo/nyc/deploy/nyc-rentmap-alert.service /etc/systemd/system/
    sudo systemctl daemon-reload
    ```
 
@@ -365,8 +380,8 @@ of date. Each step is safe to repeat.
    sudo nyc-rentmap status
    ```
 
-   `list-timers` shows the next check under `NEXT`, in the Pi's system time
-   zone (`timedatectl` shows which). `status` spends no calls; it prints the
+   `list-timers` shows the next check under `NEXT`, in the server's system
+   time zone (`timedatectl` shows which). `status` spends no calls; it prints the
    billing period, the quota, this period's passes, and the `published`
    commit.
 
@@ -376,11 +391,11 @@ The timer stays paused (step 1) while you do this. What to do depends on the
 error `pull` printed.
 
 **`Could not resolve host`, `Permission denied (publickey)`, or
-`Host key verification failed`:** the Pi can't reach GitHub, or GitHub
-rejected the deploy key, or the host keys don't match. Check the Pi's network
-connection and that the deploy key is still listed, with write access, in this
+`Host key verification failed`:** the server can't reach GitHub, or GitHub
+rejected the deploy key, or the host keys don't match. Check the server's
+network connection and that the deploy key is still listed, with write access, in this
 repository's deploy key settings on GitHub. For a host key error, compare the
-fingerprints from `sudo ssh-keygen -lf /srv/nyc-rentmap/secrets/known_hosts`
+fingerprints from `sudo ssh-keygen -lf $INSTALL_DIR/secrets/known_hosts`
 with
 https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints.
 Then repeat step 2.
@@ -390,9 +405,9 @@ local changes would be overwritten:** the clone has quota changes from a run
 that didn't reach GitHub. See what they are:
 
 ```bash
-sudo -u rentmap git -C /srv/nyc-rentmap/repo fetch origin
-sudo -u rentmap git -C /srv/nyc-rentmap/repo status --short
-sudo -u rentmap git -C /srv/nyc-rentmap/repo log --oneline origin/master..HEAD
+sudo -u $APP_USER git -C $INSTALL_DIR/repo fetch origin
+sudo -u $APP_USER git -C $INSTALL_DIR/repo status --short
+sudo -u $APP_USER git -C $INSTALL_DIR/repo log --oneline origin/master..HEAD
 ```
 
 1. `status --short` lists uncommitted changes. Runs only ever change
@@ -400,33 +415,33 @@ sudo -u rentmap git -C /srv/nyc-rentmap/repo log --oneline origin/master..HEAD
    would:
 
    ```bash
-   sudo -u rentmap git -C /srv/nyc-rentmap/repo commit -m "Commit quota changes left by an interrupted run" -- nyc/rentcast_quota.json
+   sudo -u $APP_USER git -C $INSTALL_DIR/repo commit -m "Commit quota changes left by an interrupted run" -- nyc/rentcast_quota.json
    ```
 
    Any other file listed was edited by hand in the clone. The rebase below
    refuses to run until it's gone; once you know the edit isn't needed,
    discard it with
-   `sudo -u rentmap git -C /srv/nyc-rentmap/repo checkout -- PATH`, replacing
+   `sudo -u $APP_USER git -C $INSTALL_DIR/repo checkout -- PATH`, replacing
    `PATH` with the listed path.
 
-2. `log` lists commits the Pi has and GitHub doesn't. They should all be
+2. `log` lists commits the server's clone has and GitHub doesn't. They should all be
    quota commits ("Reserve ...", "Close ...", or "Commit quota changes ...").
    Move them on top of GitHub's commits and push them:
 
    ```bash
-   sudo -u rentmap git -C /srv/nyc-rentmap/repo rebase origin/master
-   sudo -u rentmap git -C /srv/nyc-rentmap/repo push origin HEAD:master
+   sudo -u $APP_USER git -C $INSTALL_DIR/repo rebase origin/master
+   sudo -u $APP_USER git -C $INSTALL_DIR/repo push origin HEAD:master
    ```
 
    Then repeat step 2.
 
 3. If the rebase stops with
    `CONFLICT (content): Merge conflict in nyc/rentcast_quota.json`, the quota
-   tracker was changed both on the Pi and elsewhere (usually manual usage
-   recorded from another clone). Open the file as `rentmap`:
+   tracker was changed both on the server and elsewhere (usually manual usage
+   recorded from another clone). Open the file as `$APP_USER`:
 
    ```bash
-   sudoedit -u rentmap /srv/nyc-rentmap/repo/nyc/rentcast_quota.json
+   sudoedit -u $APP_USER $INSTALL_DIR/repo/nyc/rentcast_quota.json
    ```
 
    Delete the `<<<<<<<`, `=======`, and `>>>>>>>` lines and keep the entries
@@ -435,27 +450,27 @@ sudo -u rentmap git -C /srv/nyc-rentmap/repo log --oneline origin/master..HEAD
    output means it is), then finish the rebase and push:
 
    ```bash
-   sudo -u rentmap python3 -I -m json.tool /srv/nyc-rentmap/repo/nyc/rentcast_quota.json > /dev/null
-   sudo -u rentmap git -C /srv/nyc-rentmap/repo add nyc/rentcast_quota.json
-   sudo -u rentmap env GIT_EDITOR=true git -C /srv/nyc-rentmap/repo rebase --continue
-   sudo -u rentmap git -C /srv/nyc-rentmap/repo push origin HEAD:master
+   sudo -u $APP_USER python3 -I -m json.tool $INSTALL_DIR/repo/nyc/rentcast_quota.json > /dev/null
+   sudo -u $APP_USER git -C $INSTALL_DIR/repo add nyc/rentcast_quota.json
+   sudo -u $APP_USER env GIT_EDITOR=true git -C $INSTALL_DIR/repo rebase --continue
+   sudo -u $APP_USER git -C $INSTALL_DIR/repo push origin HEAD:master
    ```
 
    If the rebase stops again on a later commit, repeat this for each stop.
    Then repeat step 2.
 
 To back out of a rebase at any point, run
-`sudo -u rentmap git -C /srv/nyc-rentmap/repo rebase --abort`, and resume the
+`sudo -u $APP_USER git -C $INSTALL_DIR/repo rebase --abort`, and resume the
 timer with `sudo systemctl start nyc-rentmap.timer`.
 
 ## Restoring from the backup
 
-If the Pi's data is lost (for example, a failed SD card), rebuild it from
+If the server's data is lost (for example, a failed disk), rebuild it from
 the backup repository. Nothing here spends RentCast calls.
 
-1. On the replacement Pi (or SD card), do Setup steps 1 to 6 and step 12
-   parts 2 and 3. Both deploy keys are new, so on GitHub delete the old Pi's
-   keys from each repository's **Deploy Keys** settings.
+1. On the replacement server, set the variables at the start of Setup, then
+   do Setup steps 1 to 6 and step 12 parts 2 and 3. Both deploy keys are new,
+   so on GitHub delete the old server's keys from each repository's **Deploy Keys** settings.
 2. Restore the raw responses and run ledgers, then rebuild:
 
    ```bash
@@ -463,7 +478,7 @@ the backup repository. Nothing here spends RentCast calls.
    sudo nyc-rentmap publish
    ```
 
-   `restore` unpacks every archive into `/srv/nyc-rentmap/data` without
+   `restore` unpacks every archive into `$INSTALL_DIR/data` without
    overwriting files already there, and prints how many it wrote.
    `publish` rewrites each collected period's scrape from its raw responses
    and rebuilds and republishes the whole site.
@@ -475,9 +490,9 @@ the backup repository. Nothing here spends RentCast calls.
 - **Code updates:** each run pulls new commits and restarts onto them, so
   changes to the Python code and settings take effect in that same run.
   Changes to `nyc/deploy/` and `nyc/docker/` take effect only through
-  "Updating the Pi" above.
-- **Manual RentCast calls** made anywhere other than the Pi's runs must be
-  recorded in the committed tracker before the Pi's next run; otherwise the
+  "Updating the server" above.
+- **Manual RentCast calls** made anywhere other than the server's runs must be
+  recorded in the committed tracker before its next run; otherwise the
   run believes more quota is left than there is. From the top folder of a
   clone of this repo on another computer, outside the daily check's window:
 
@@ -490,7 +505,7 @@ the backup repository. Nothing here spends RentCast calls.
 
   Replace `N` with the number of calls, in both places. Without
   `--date YYYY-MM-DD`, the calls are recorded as made today. If the push is
-  rejected because the Pi pushed in the meantime, run `git pull --rebase` and
+  rejected because the server pushed in the meantime, run `git pull --rebase` and
   `git push` again.
 
   To make the tracker match the RentCast dashboard instead, run
@@ -513,9 +528,9 @@ the backup repository. Nothing here spends RentCast calls.
 - **A watchdog email** means this period's collection or publish didn't
   happen. The failed run's log on GitHub says which: no collection has
   started, collection started but not finished, or collected but not
-  published. On the Pi, `journalctl -u nyc-rentmap.service` shows the runs'
+  published. On the server, `journalctl -u nyc-rentmap.service` shows the runs'
   errors and `sudo nyc-rentmap status` shows the period's state. The
-  watchdog keeps failing daily until the Pi catches up.
+  watchdog keeps failing daily until the server catches up.
 - **A failed run** (non-zero exit, visible in `systemctl --failed`) leaves its
   reservation open, so usage is overstated, never understated; the next daily
   check resumes it.
