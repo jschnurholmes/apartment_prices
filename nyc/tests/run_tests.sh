@@ -324,6 +324,7 @@ check "the complete source is stored, the incomplete one isn't" '[ -s "$W/data/m
 mv "$W/held.zip" "$W/files/streeteasy/TwoBd/rentalInventory_TwoBd.zip"
 out=$(mk normal 2026-11-24); echo "$out" | grep -E "RESULT|market data"
 check "the new data is published, and city.json lists it" 'pages_file streeteasy.json | grep -q "\"Hood 139\"" && pages_file city.json | grep -q "\"market\": \[\"zillow\", \"streeteasy\"\]" && pages_file zillow.json | grep -q "\"zip\":\"07030\"" && ! pages_file zillow.json | grep -q "\"zip\":\"07002\""'
+check "both pages carry the required credit" 'pages_file index.html | grep -q "Data Provided by Zillow Group" && pages_file trends.html | grep -q "Data Provided by Zillow Group"'
 check "next day: retried, stored and recorded" 'echo "$out" | grep -q "RESULT ok" && [ "$(ls "$W/data/market/streeteasy" | wc -l | tr -d " ")" = 9 ] && grep -q "\"market_data\": \"[0-9a-f]\{16\}\"" "$W"/data/runs/2026-11-21.json && grep -q "\"published\": \"" "$W"/data/runs/2026-11-21.json'
 before=$(gets)
 out=$(mk normal 2026-11-25); echo "$out" | grep RESULT

@@ -58,6 +58,14 @@
   <button id="toggle-panel" type="button" aria-label="Show or hide controls">☰</button>
   <h1>Boston rent map</h1>
 
+  <div id="src-wrap" style="display:none">
+    <label for="src">Data</label>
+    <select id="src">
+      <option value="map">Rent map</option>
+      <option value="zillow">Zillow rents by ZIP code</option>
+    </select>
+  </div>
+
   <label for="date">Month</label>
   <div class="row">
     <button id="earlier" type="button" aria-label="Earlier month">&lt;</button>
@@ -101,6 +109,7 @@
   </div>
 
   <div id="summary"></div>
+  <div id="credit" style="display:none; margin-top:6px; font-size:12px; color:var(--text-2)">Data Provided by Zillow Group</div>
   <div id="links"><a href="trends.html">Trends</a><a href="/">Main site</a><a href="#" id="about-link">About</a></div>
   <div id="about" style="display:none; font-size:12px; color:var(--text-2); margin-top:6px">
     Each month's map pools new listings from the past year (weighted toward
@@ -109,6 +118,12 @@
     nearby listings, using the smallest radius with enough data.  Sizes differ
     by a fixed multiplier estimated from listings at the same locations.
     Click anywhere for the estimate at that spot.
+    <span id="about-zillow" style="display:none"><br><br>Zillow's layer is its rent index for each
+    ZIP code, covering houses, condos and apartments of every size together, so
+    it isn't comparable dollar for dollar with the rent map.  Each ZIP code is
+    colored whole, drawn from Census approximations of postal boundaries.
+    "Relative to the city" compares with the typical home across these ZIP
+    codes.</span>
   </div>
 </div>
 
@@ -138,7 +153,10 @@ const NEFF_LO = 3, NEFF_HI = 12;
 const SIGMA_FULL = 700, SIGMA_ZERO = 1500;   // meters
 
 const state = { dates: [], idx: 0, size: 2, mode: "nominal", cmpIdx: 0, cmpReal: true,
-                opacity: 0.75, fade: true, mask: true, dots: false };
+                opacity: 0.75, fade: true, mask: true, dots: false, src: "map" };
+let MARKET = [];        // which of Zillow's and StreetEasy's data this site has
+let zillow = null;
+const timelines = {};   // src -> {dates, idx, cmpIdx} while the other one is showing
 const cache = {};       // date -> {meta, logv: Float32Array, neff: Uint8Array, dots}
 let trends = null, maskData = null, basemap = null;
 let W = 1000, H = 1000;
@@ -151,6 +169,7 @@ async function applyCity() {
   BOUNDS = c.bounds; CENTER = c.center; ZOOM = c.zoom; W = H = c.map_px;
   if (c.dollar_buckets) DOLLAR_BUCKETS = c.dollar_buckets;
   canvas.width = W; canvas.height = H;
+  MARKET = c.market || [];
   document.title = c.name + " Rent Map";
   document.querySelector("h1").textContent = c.name + " rent map";
 }
@@ -242,12 +261,15 @@ function colorFor(val) {
 }
 
 async function render() {
+  if (state.src === "zillow") return renderZillow();
   const date = state.dates[state.idx];
   status("Loading " + date + "…");
   const cur = await loadMonth(date);
+  if (state.src !== "map") return;
   let old = null;
   if (state.mode === "change") {
     old = await loadMonth(state.dates[state.cmpIdx]);
+    if (state.src !== "map") return;
     // change for the chosen size: surfaces are 2BR-equivalent, and the size
     // multipliers can drift between the two months
     state.cmpFactor = (state.cmpReal
@@ -280,15 +302,97 @@ async function render() {
       ctx.fillRect(x - 1, y - 1, 2, 2);
     }
   }
+  basemap.setZips(null);
   basemap.setOverlay(canvas.toDataURL("image/png"), state.opacity);
-  drawLegend(cur);
+  drawLegend(sizeMult(cur.meta));
   drawSummary(cur);
   status("");
 }
 
+// ---- Zillow rents by ZIP
+async function loadZillow() {
+  if (zillow) return zillow;
+  const z = await getJSON("zillow.json");
+  for (const a of z.zips) {
+    const pts = a.rings.flat();
+    a.bbox = [Math.min(...pts.map(p => p[0])), Math.min(...pts.map(p => p[1])),
+              Math.max(...pts.map(p => p[0])), Math.max(...pts.map(p => p[1]))];
+  }
+  return zillow = z;
+}
+
+function zillowReal(i) { return zillow.cpi[i] && zillow.cpi_latest ? zillow.cpi_latest / zillow.cpi[i] : 1; }
+
+function zipValue(a) {
+  const v = a.rent[state.idx];
+  if (v == null) return null;
+  if (state.mode === "nominal") return v;
+  if (state.mode === "real") return v * zillowReal(state.idx);
+  if (state.mode === "relative") return v / zillow.city[state.idx];
+  const o = a.rent[state.cmpIdx];
+  if (o == null) return null;
+  return v / o * (state.cmpReal ? zillowReal(state.idx) / zillowReal(state.cmpIdx) : 1) - 1;
+}
+
+async function renderZillow() {
+  status("Loading ZIP codes…");
+  await loadZillow();
+  if (state.src !== "zillow") return;
+  const colors = zillow.zips.map(a => {
+    const v = zipValue(a);
+    return v === null ? null : "rgb(" + colorFor(v).join(",") + ")";
+  });
+  basemap.setOverlay(null);
+  basemap.setZips(zillow.zips, colors, state.opacity);
+  drawLegend(1);
+  const el = document.getElementById("summary"), b = document.createElement("b"), i = state.idx;
+  const shown = colors.filter(c => c).length, real = state.mode === "real";
+  b.textContent = money(zillow.city[i] * (real ? zillowReal(i) : 1));
+  el.replaceChildren("Typical rent across ZIP codes with a figure: ", b, document.createElement("br"),
+    "Zillow's index, all sizes and home types together: " + shown + " of " + zillow.zips.length + " ZIP codes have a figure" +
+    (state.mode === "change" ? " for both months." : "."));
+  if (state.mode !== "nominal" && zillow.cpi_latest_month)
+    el.append(document.createElement("br"), "Today's dollars = CPI-U as of " + zillow.cpi_latest_month + ".");
+  status("");
+}
+
+function zipAt(lat, lng) {
+  return zillow.zips.find(a => {
+    if (lng < a.bbox[0] || lng > a.bbox[2] || lat < a.bbox[1] || lat > a.bbox[3]) return false;
+    let inside = false;
+    for (const r of a.rings) for (let i = 0, j = r.length - 1; i < r.length; j = i++)
+      if ((r[i][1] > lat) !== (r[j][1] > lat) &&
+          lng < (r[j][0] - r[i][0]) * (lat - r[i][1]) / (r[j][1] - r[i][1]) + r[i][0]) inside = !inside;
+    return inside;
+  });
+}
+
+function zipPopup(lat, lng) {
+  const a = zillow && zipAt(lat, lng);
+  if (!a) return null;
+  const wrap = document.createElement("div"), i = state.idx, v = a.rent[i]; wrap.className = "popup";
+  const line = (text, cls) => { const d = document.createElement("div"); d.textContent = text; if (cls) d.className = cls; wrap.append(d); };
+  const head = document.createElement("b"); head.textContent = "ZIP code " + a.zip; wrap.append(head);
+  if (v == null) {
+    const first = a.rent.findIndex(x => x != null);
+    line("No Zillow rent for " + state.dates[i] + (first > i ? "; its figures start in " + state.dates[first] : "") + ".");
+    return wrap;
+  }
+  if (state.mode === "real") line("Rent, " + state.dates[i] + ", today's dollars: " + money(v * zillowReal(i)));
+  else line("Rent, " + state.dates[i] + ": " + money(v));
+  if (state.mode === "relative") line(zipValue(a).toFixed(2) + "× the typical home across these ZIP codes");
+  if (state.mode === "change") {
+    const o = a.rent[state.cmpIdx];
+    line(o == null ? "No rent for " + state.dates[state.cmpIdx] + "." : "From " + money(o) + " in " + state.dates[state.cmpIdx] + ", " +
+      pct(zipValue(a)) + (state.cmpReal ? " after inflation" : ""));
+  }
+  line("Zillow's index for all sizes and home types.", "muted");
+  return wrap;
+}
+
 function sizeMult(meta) { return meta.bedroom_mult[String(state.size)]; }
 
-function drawLegend(cur) {
+function drawLegend(m) {
   const el = document.getElementById("legend");
   el.replaceChildren();
   const items = [];
@@ -306,7 +410,6 @@ function drawLegend(cur) {
     items.push([MAGMA[MAGMA.length - 1], "below " + REL_BUCKETS[REL_BUCKETS.length - 1].toFixed(2) + "×"]);
   } else {
     // Colors are thresholds on 2BR-equivalent rent; label them for the chosen size.
-    const m = sizeMult(cur.meta);
     DOLLAR_BUCKETS.forEach((b, k) => items.push([MAGMA[k], money(b * m) + "+"]));
     items.push([MAGMA[MAGMA.length - 1], "under " + money(DOLLAR_BUCKETS[DOLLAR_BUCKETS.length - 1] * m)]);
   }
@@ -342,6 +445,7 @@ function lookup(lat, lng) {
 }
 
 function popupFor(lat, lng) {
+  if (state.src === "zillow") return zipPopup(lat, lng);
   const i = lookup(lat, lng);
   if (i === null) return null;
   const date = state.dates[state.idx], cur = cache[date];
@@ -396,8 +500,17 @@ function googleBasemap() {
     info = new google.maps.InfoWindow({ content: node, position: e.latLng });
     info.open(map);
   });
+  let polys = null;
   return {
+    setZips(zips, colors, opacity) {
+      if (!zips) { if (polys) polys.forEach(p => p.setMap(null)); polys = null; return; }
+      if (!polys) polys = zips.map(a => new google.maps.Polygon({ clickable: false, strokeColor: "#ffffff", strokeWeight: 0.7, map,
+        paths: a.rings.map(r => r.map(([lng, lat]) => ({ lat, lng }))) }));
+      polys.forEach((p, i) => p.setOptions(colors[i] ? { visible: true, fillColor: colors[i], fillOpacity: opacity, strokeOpacity: opacity }
+                                                     : { visible: false }));
+    },
     setOverlay(url, opacity) {
+      if (!url) { if (overlay) overlay.setMap(null); overlay = null; return; }
       const next = new google.maps.GroundOverlay(url, b, { opacity, clickable: false });
       next.setMap(map);
       if (overlay) overlay.setMap(null);
@@ -416,8 +529,17 @@ function leafletBasemap() {
     const node = popupFor(e.latlng.lat, e.latlng.lng);
     if (node) L.popup().setLatLng(e.latlng).setContent(node).openOn(map);
   });
+  let polys = null;
   return {
+    setZips(zips, colors, opacity) {
+      if (!zips) { if (polys) polys.forEach(p => p.remove()); polys = null; return; }
+      if (!polys) polys = zips.map(a => L.polygon(a.rings.map(r => r.map(([lng, lat]) => [lat, lng])),
+        { interactive: false, color: "#ffffff", weight: 0.7 }).addTo(map));
+      polys.forEach((p, i) => p.setStyle({ fill: !!colors[i], stroke: !!colors[i], fillColor: colors[i] || "#000",
+                                           fillOpacity: opacity, opacity }));
+    },
     setOverlay(url, opacity) {
+      if (!url) { if (overlay) overlay.remove(); overlay = null; return; }
       const bb = [[BOUNDS.south, BOUNDS.west], [BOUNDS.north, BOUNDS.east]];
       if (overlay) { overlay.setUrl(url); overlay.setOpacity(opacity); }
       else overlay = L.imageOverlay(url, bb, { opacity, interactive: false }).addTo(map);
@@ -464,6 +586,7 @@ function readHash() {
 }
 function writeHash() {
   const h = new URLSearchParams({ date: state.dates[state.idx], size: state.size, mode: state.mode });
+  if (state.src !== "map") h.set("src", state.src);
   if (state.mode === "change") h.set("cmp", state.dates[state.cmpIdx]);
   history.replaceState(null, "", "#" + h.toString());
 }
@@ -472,9 +595,28 @@ function syncControls() {
   document.getElementById("cmp").value = state.cmpIdx;
   document.getElementById("size").value = state.size;
   document.getElementById("mode").value = state.mode;
+  document.getElementById("src").value = state.src;
+  document.getElementById("size").disabled = state.src === "zillow";
+  for (const k of ["fade", "mask", "dots"]) document.getElementById(k).disabled = state.src === "zillow";
   document.getElementById("cmp-wrap").style.display = state.mode === "change" ? "" : "none";
   document.getElementById("earlier").disabled = state.idx <= 0;
   document.getElementById("later").disabled = state.idx >= state.dates.length - 1;
+}
+function fillDates() {
+  for (const id of ["date", "cmp"]) {
+    const sel = document.getElementById(id); sel.replaceChildren();
+    state.dates.forEach((d, i) => { const o = document.createElement("option"); o.value = i; o.textContent = d; sel.append(o); });
+  }
+}
+async function switchSource(src) {
+  if (src === state.src) return;
+  if (src === "zillow" && !timelines.zillow) {
+    const z = await loadZillow();
+    timelines.zillow = { dates: z.months, idx: z.months.length - 1, cmpIdx: Math.max(0, z.months.length - 13) };
+  }
+  timelines[state.src] = { dates: state.dates, idx: state.idx, cmpIdx: state.cmpIdx };
+  Object.assign(state, timelines[src], { src });
+  fillDates();
 }
 function update() { syncControls(); writeHash(); render().catch(e => status("Error: " + e.message)); }
 
@@ -499,11 +641,17 @@ async function main() {
   state.cmpIdx = -1;
   readHash();
   if (state.cmpIdx < 0) state.cmpIdx = defaultCmp();
-
-  for (const id of ["date", "cmp"]) {
-    const sel = document.getElementById(id);
-    state.dates.forEach((d, i) => { const o = document.createElement("option"); o.value = i; o.textContent = d; sel.append(o); });
+  if (MARKET.length) document.getElementById("credit").style.display = "";
+  if (MARKET.includes("zillow")) {
+    document.getElementById("src-wrap").style.display = "";
+    document.getElementById("about-zillow").style.display = "";
+    if (new URLSearchParams(location.hash.slice(1)).get("src") === "zillow") {
+      await switchSource("zillow");
+      readHash();
+    }
   }
+  fillDates();
+  document.getElementById("src").onchange = e => switchSource(e.target.value).then(update).catch(x => status("Error: " + x.message));
   document.getElementById("date").onchange = e => { state.idx = +e.target.value; update(); };
   document.getElementById("cmp").onchange = e => { state.cmpIdx = +e.target.value; update(); };
   document.getElementById("earlier").onclick = () => { if (state.idx > 0) { state.idx--; update(); } };
