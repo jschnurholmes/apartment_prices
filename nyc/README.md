@@ -1,7 +1,11 @@
 # NYC rent map: RentCast collection and publishing
 
 `collect.py` pulls NYC rental listings from RentCast once per billing period
-and writes them in the format Jeff's v3 build reads (`apts-<ts>.txt`). It then
+and writes them in the format Jeff's v3 build reads (`apts-<ts>.txt`). Besides
+the five boroughs, it keeps listings in the municipalities outside the city
+that lie wholly inside its search circles (`cities/nyc_areas.json`, written by
+`nyc/build_areas.py`); changing those areas rewrites past months' scrapes from
+their saved raw responses and rebuilds the site on the next run. It then
 builds the site with Jeff's `build_rentmap.py` (`RENTMAP_CITY=nyc`, settings in
 `cities/nyc.json`) and pushes it to the `gh-pages` branch as a single commit,
 which GitHub Pages serves. It runs on a Raspberry Pi in a Docker container,

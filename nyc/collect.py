@@ -33,6 +33,7 @@ Usage:
 import datetime
 import fcntl
 import gzip
+import hashlib
 import json
 import math
 import os
@@ -45,11 +46,15 @@ import urllib.error
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
+sys.path.insert(1, ROOT)
+import city_areas
 import rentcast_client
 import rentcast_quota
 
 CONFIG = os.path.join(HERE, "collect_config.json")
+CITY_CONFIG = os.path.join(ROOT, "cities", "nyc.json")
 NYC_COUNTIES = {"36005", "36047", "36061", "36081", "36085"}
 
 
@@ -180,16 +185,110 @@ def restart_if_updated(pulled):
         os.execv(sys.executable, [sys.executable] + sys.orig_argv[1:])
 
 
+def load_city():
+    with open(CITY_CONFIG) as f:
+        return json.load(f)
+
+
+class ScrapeFilter:
+    """Which listings a scrape keeps: those in the NYC counties or the city's areas."""
+
+    def __init__(self):
+        path = os.path.join(ROOT, load_city()["areas"])
+        self.areas = city_areas.load(path)
+        with open(path, "rb") as f:
+            self.fingerprint = hashlib.sha256(
+                json.dumps(sorted(NYC_COUNTIES)).encode() + f.read()).hexdigest()[:16]
+
+    def keep(self, r):
+        if (r.get("stateFips", "") + r.get("countyFips", "")) in NYC_COUNTIES:
+            return True
+        return city_areas.find(self.areas, r["longitude"], r["latitude"]) is not None
+
+
+def scrape_path(data_dir, led):
+    return os.path.join(data_dir, "v3", "apts-%d.txt" % led["scrape_ts"])
+
+
+def write_scrape(data_dir, led, flt):
+    listings = {}
+    for c in led["calls"]:
+        if c["state"] != "done" or c["status"] != 200:
+            continue
+        with gzip.open(os.path.join(data_dir, c["file"])) as f:
+            for r in json.load(f):
+                if None in (r.get("price"), r.get("bedrooms"), r.get("latitude"), r.get("longitude")):
+                    continue
+                if not flt.keep(r):
+                    continue
+                listings[re.sub(r"\s+", "-", r["id"])] = r
+    lines = ["# RentCast, billing period %s, %d listings\n" % (led["period_start"], len(listings))]
+    for lid, r in sorted(listings.items()):
+        lines.append("%d %d %s %.6f %.6f\n" % (round(r["price"]), int(r["bedrooms"]), lid,
+                                               r["longitude"], r["latitude"]))
+    path = scrape_path(data_dir, led)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    atomic_write(path, "".join(lines).encode())
+    led["scrape_filter"] = flt.fingerprint
+    print("wrote %s (%d listings)" % (path, len(listings)))
+
+
+def refilter_scrapes(data_dir, flt):
+    """Rewrite scrapes written under an older filter from their raw responses.
+
+    A rewritten period's ledger loses its "published" mark, so the next run
+    republishes. Returns True if any scrape was rewritten.
+    """
+    runs = os.path.join(data_dir, "runs")
+    changed = False
+    for name in sorted(os.listdir(runs)) if os.path.isdir(runs) else []:
+        if not name.endswith(".json"):
+            continue
+        ledger = Ledger(data_dir, name[:-len(".json")])
+        led = ledger.s
+        if (not led.get("scrape_ts") or led.get("scrape_filter") == flt.fingerprint
+                or not os.path.exists(scrape_path(data_dir, led))):
+            continue
+        files = [c["file"] for c in led["calls"] if c["state"] == "done" and c["status"] == 200]
+        if not all(os.path.exists(os.path.join(data_dir, f)) for f in files):
+            print("can't refilter period %s: its raw responses were pruned" % led["period_start"])
+            continue
+        write_scrape(data_dir, led, flt)
+        led.pop("published", None)
+        ledger.save()
+        changed = True
+    return changed
+
+
+def build_fingerprint(repo):
+    city = load_city()
+    h = hashlib.sha256(ScrapeFilter().fingerprint.encode())
+    for rel in ("cities/nyc.json", city["mask"], city["units"]):
+        path = os.path.join(repo, rel)
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                h.update(f.read())
+        else:
+            h.update(b"missing " + rel.encode())
+    return h.hexdigest()[:16]
+
+
 def build_and_publish(repo, data_dir, git, label):
     site = os.path.join(data_dir, "site")
     os.makedirs(site, exist_ok=True)
+    stamp = os.path.join(data_dir, "site.fingerprint")
+    fingerprint = build_fingerprint(repo)
+    force = not os.path.exists(stamp) or open(stamp).read().strip() != fingerprint
+    if force:
+        print("rebuilding every month: first build, or the city settings or filter changed")
     p = subprocess.run([sys.executable, "-B", os.path.join(repo, "build_rentmap.py"),
-                        os.path.join(data_dir, "v3"), site],
+                        os.path.join(data_dir, "v3"), site] + (["--force"] if force else []),
                        cwd=repo, env=dict(os.environ, RENTMAP_CITY="nyc"),
                        capture_output=True, text=True, timeout=3600)
     print(p.stdout.strip())
     if p.returncode:
         raise RunStop("site build failed: %s" % p.stderr.strip()[-2000:])
+    atomic_write(stamp, fingerprint.encode())
     open(os.path.join(site, ".nojekyll"), "w").close()
     commit = git.publish_tree(site, "gh-pages", "Publish NYC rent map: %s" % label)
     print("gh-pages %s" % ("unchanged" if commit is None else "updated to %s" % commit[:10]))
@@ -231,6 +330,7 @@ class Collector:
         self.key = key
         self.today = today or rentcast_quota._today()
         self.http = http
+        self.filter = ScrapeFilter()
 
     def quota(self):
         return rentcast_quota.Quota(self.quota_path)
@@ -240,6 +340,7 @@ class Collector:
             self.git.run("commit", "-q", "-m", "Commit quota changes left by an interrupted run",
                          "--", self.quota_rel)
         restart_if_updated(self.git.sync())
+        refilter_scrapes(self.data_dir, self.filter)
         q = self.quota()
         start, _ = q.period(self.today)
         if self.today <= start:
@@ -417,29 +518,11 @@ class Collector:
         return int(total) if total is not None else len(json.loads(body))
 
     def write_scrape(self):
-        listings = {}
-        for c in self.ledger.s["calls"]:
-            if c["state"] != "done" or c["status"] != 200:
-                continue
-            with gzip.open(os.path.join(self.data_dir, c["file"])) as f:
-                for r in json.load(f):
-                    if (r.get("stateFips", "") + r.get("countyFips", "")) not in NYC_COUNTIES:
-                        continue
-                    if None in (r.get("price"), r.get("bedrooms"), r.get("latitude"), r.get("longitude")):
-                        continue
-                    listings[re.sub(r"\s+", "-", r["id"])] = r
-        lines = ["# RentCast, billing period %s, %d NYC listings\n"
-                 % (self.ledger.s["period_start"], len(listings))]
-        for lid, r in sorted(listings.items()):
-            lines.append("%d %d %s %.6f %.6f\n" % (round(r["price"]), int(r["bedrooms"]), lid,
-                                                   r["longitude"], r["latitude"]))
-        path = self.scrape_path()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        atomic_write(path, "".join(lines).encode())
-        print("wrote %s (%d NYC listings)" % (path, len(listings)))
+        write_scrape(self.data_dir, self.ledger.s, self.filter)
+        self.ledger.save()
 
     def scrape_path(self):
-        return os.path.join(self.data_dir, "v3", "apts-%d.txt" % self.ledger.s["scrape_ts"])
+        return scrape_path(self.data_dir, self.ledger.s)
 
     def prune_raw(self):
         y, m = rentcast_quota._add_months(self.today.year, self.today.month, -self.cfg["raw_retention_months"])
@@ -489,6 +572,7 @@ def main(argv):
             if argv[0] == "publish":
                 git = Git(repo)
                 restart_if_updated(git.sync())
+                refilter_scrapes(data_dir, ScrapeFilter())
                 build_and_publish(repo, data_dir, git, "manual rebuild")
             else:
                 Collector(repo, data_dir, key).run()

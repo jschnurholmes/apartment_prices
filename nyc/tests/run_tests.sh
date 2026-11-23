@@ -195,5 +195,30 @@ PASS=$((PASS + $(echo "$out" | grep -c '^PASS')))
 FAIL=$((FAIL + $(echo "$out" | grep -c '^FAIL')))
 echo "$out" | grep -q '^alert tests done' || { echo "FAIL alert tests didn't finish"; FAIL=$((FAIL + 1)); }
 
+echo "=== 10. area filter on real boundaries ==="
+out=$("$PY" -I "$T/test_areas.py" 2>&1); echo "$out"
+PASS=$((PASS + $(echo "$out" | grep -c '^PASS')))
+FAIL=$((FAIL + $(echo "$out" | grep -c '^FAIL')))
+echo "$out" | grep -q '^area tests done' || { echo "FAIL area tests didn't finish"; FAIL=$((FAIL + 1)); }
+
+echo "=== 11. areas change mid-period: scrape rewritten from raw, site rebuilt ==="
+setup
+out=$(run normal 2026-11-22); echo "$out" | grep -E "RESULT|rebuilding|wrote"
+check "first publish forces a full build" 'echo "$out" | grep -q "rebuilding every month"'
+before=$(git -C "$W/origin.git" rev-parse gh-pages)
+(cd "$W/laptop" && git pull -q --ff-only && python3 -I - <<'PY' && git commit -qam "test area" && git push -q)
+import json
+p = "cities/nyc_areas.json"
+d = json.load(open(p))
+d["areas"].append({"geoid": "test", "name": "Test Area", "state": "NJ", "housing_units": 0, "label": [40.655, -73.95],
+                   "rings": [[[-73.96, 40.64], [-73.94, 40.64], [-73.94, 40.67], [-73.96, 40.67]]]})
+json.dump(d, open(p, "w"))
+PY
+out=$(run normal 2026-11-23); echo "$out" | grep -E "RESULT|restarting|wrote|rebuilding|gh-pages"
+check "restarted onto the new areas and rewrote the scrape from raw, adding the area's 2,016 listings" 'echo "$out" | grep -q "restarting" && echo "$out" | grep -q "(10072 listings)" && [ "$(grep -c "^[0-9]" "$W"/data/v3/apts-*.txt)" = 10072 ]'
+check "forced a full rebuild and republished, without spending calls" 'echo "$out" | grep -q "rebuilding every month" && [ "$(git -C "$W/origin.git" rev-parse gh-pages)" != "$before" ] && grep -q "\"published\": \"[0-9a-f]\{40\}\"" "$W"/data/runs/2026-11-21.json && [ "$(calls)" = 23 ]'
+out=$(run normal 2026-11-24); echo "$out" | grep -E "RESULT|wrote|rebuilding|already"
+check "next day: nothing rewritten or rebuilt" '! echo "$out" | grep -q "wrote" && ! echo "$out" | grep -q "rebuilding" && echo "$out" | grep -q "already collected"'
+
 echo; echo "$PASS passed, $FAIL failed"
 if [ "$FAIL" = 0 ]; then rm -rf "$W"; else echo "test repos kept in $W"; exit 1; fi
