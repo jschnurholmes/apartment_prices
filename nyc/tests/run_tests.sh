@@ -323,7 +323,7 @@ check "one file missing: the run fails and names it, after publishing and withou
 check "the complete source is stored, the incomplete one isn't" '[ -s "$W/data/market/zillow/zip_rents.csv" ] && [ ! -e "$W/data/market/streeteasy" ] && ! grep -q "\"market_data\"" "$W"/data/runs/2026-11-21.json'
 mv "$W/held.zip" "$W/files/streeteasy/TwoBd/rentalInventory_TwoBd.zip"
 out=$(mk normal 2026-11-24); echo "$out" | grep -E "RESULT|market data"
-check "the new data is published, and city.json lists it" 'pages_file streeteasy.json | grep -q "\"Hood 139\"" && pages_file city.json | grep -q "\"market\": \[\"streeteasy\"\]"'
+check "the new data is published, and city.json lists it" 'pages_file streeteasy.json | grep -q "\"Hood 139\"" && pages_file city.json | grep -q "\"market\": \[\"zillow\", \"streeteasy\"\]" && pages_file zillow.json | grep -q "\"zip\":\"07030\"" && ! pages_file zillow.json | grep -q "\"zip\":\"07002\""'
 check "next day: retried, stored and recorded" 'echo "$out" | grep -q "RESULT ok" && [ "$(ls "$W/data/market/streeteasy" | wc -l | tr -d " ")" = 9 ] && grep -q "\"market_data\": \"[0-9a-f]\{16\}\"" "$W"/data/runs/2026-11-21.json && grep -q "\"published\": \"" "$W"/data/runs/2026-11-21.json'
 before=$(gets)
 out=$(mk normal 2026-11-25); echo "$out" | grep RESULT
@@ -341,7 +341,7 @@ rm "$W/files/zillow/zip_rents.csv"; printf 'not a zip' > "$W/files/streeteasy/On
 out=$(mk normal 2027-01-22); echo "$out" | grep -E "RESULT|market data"
 check "both sources bad in a new period: the last good data stays published" 'echo "$out" | grep -q "RESULT stopped: market data: " && pages_file streeteasy.json | grep -q "\"2026-11\"" && grep -q "\"published\": \"" "$W"/data/runs/2026-12-21.json && [ "$(git -C "$W/origin.git" log -1 --format=%s gh-pages)" = "Publish NYC rent map: period 2027-01-21" ]'
 out=$(run mainpublish 2027-01-23); echo "$out" | grep -E "RESULT"
-check "settings removed: the data leaves the site" 'echo "$out" | grep -q "RESULT ok" && ! pages_file streeteasy.json >/dev/null && ! pages_file city.json | grep -q market'
+check "settings removed: the data leaves the site" 'echo "$out" | grep -q "RESULT ok" && ! pages_file streeteasy.json >/dev/null && ! pages_file zillow.json >/dev/null && ! pages_file city.json | grep -q market'
 kill $HTTP; wait $HTTP 2>/dev/null
 
 }

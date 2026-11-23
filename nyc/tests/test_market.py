@@ -110,6 +110,23 @@ check("site data: the latest CPI is carried forward", lambda: built()["cpi"] == 
 check("site data: index in $10 steps, gaps kept", lambda: built()["index"]["series"] == {"NYC": [4010], "Queens": [None]})
 
 
+def zillow_built():
+    rent = {"10001": [4000.0, 4004.0], "10002": [3000.0, None], "07030": [None, 5000.0], "07002": [1.0, 1.0], "10003": [None, None]}
+    return build_market.zillow({"months": ["2026-09", "2026-10"], "zips": {z: {"nyc": True, "rent": r} for z, r in rent.items()}},
+                               {"2026-09": 331.0})
+
+
+def weighted():
+    units = {z["zip"]: z["units"] for z in json.load(open(build_market.ZIPS))["zips"]}
+    return units["10002"] > units["10001"] and units["07030"] > units["10001"]
+
+
+check("Zillow site data: only the map's ZIPs that have a rent, in $10 steps", lambda: {z["zip"]: z["rent"] for z in zillow_built()["zips"]}
+      == {"10001": [4000, 4000], "10002": [3000, None], "07030": [None, 5000]})
+check("Zillow site data: every ZIP has its outline", lambda: all(len(z["rings"][0]) >= 4 for z in zillow_built()["zips"]))
+check("Zillow site data: the citywide median is weighted by homes", lambda: weighted() and zillow_built()["city"] == [3000, 5000])
+
+
 def archived():
     led = {"period_start": "2026-11-21", "calls": [], "market_data": "0123456789abcdef", "scrape_ts": 1}
     with tempfile.TemporaryDirectory() as d:

@@ -11,11 +11,15 @@ import json
 import os
 import sys
 
+import numpy as np
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(1, os.path.dirname(HERE))
 import build_rentmap
 import market_data
+
+ZIPS = os.path.join(os.path.dirname(HERE), "cities", "nyc_zips.json")
 
 
 def rounded(v):
@@ -26,6 +30,22 @@ def cpi_fields(cpi, months):
     return {"cpi": [build_rentmap.cpi_for(cpi, m + "-01") for m in months],
             "cpi_latest": cpi[max(cpi)] if cpi else None,
             "cpi_latest_month": max(cpi) if cpi else None}
+
+
+def zillow(data, cpi):
+    """The map's ZIPs with any rent; "city" is their median weighted by homes, like the rent map's."""
+    with open(ZIPS) as f:
+        areas = json.load(f)["zips"]
+    zips = [dict(zip=a["zip"], units=a["units"], rings=a["rings"], rent=data["zips"][a["zip"]]["rent"])
+            for a in areas if a["zip"] in data["zips"]]
+    zips = [z for z in zips if any(v is not None for v in z["rent"])]
+    city = []
+    for t in range(len(data["months"])):
+        have = [z for z in zips if z["rent"][t] is not None]
+        city.append(rounded(build_rentmap.rentmap._wmedian(np.array([z["rent"][t] for z in have]),
+                                                           np.array([z["units"] for z in have]))) if have else None)
+    return dict(cpi_fields(cpi, data["months"]), months=data["months"], city=city,
+                zips=[{"zip": z["zip"], "rent": [rounded(v) for v in z["rent"]], "rings": z["rings"]} for z in zips])
 
 
 def streeteasy(data, cpi):
@@ -48,7 +68,7 @@ def streeteasy(data, cpi):
 def main(data_dir, site):
     cpi = build_rentmap.read_cpi(site)
     built = []
-    for source, build in (("streeteasy", streeteasy),):
+    for source, build in (("zillow", zillow), ("streeteasy", streeteasy)):
         path = os.path.join(site, source + ".json")
         data = market_data.stored(data_dir, source) if source in market_data.sources() else None
         if data is None:
