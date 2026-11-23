@@ -299,7 +299,47 @@ check "wrapper script parses" 'sh -n "$REPO/nyc/deploy/nyc-rentmap"'
 
 }
 
-ALL_GROUPS="publish quota failures restart alert areas scrape refilter backup analytics"
+g_market() {
+echo "=== market: market data parsing and validation ==="
+out=$("$PY" -I "$T/test_market.py" 2>&1); echo "$out" | grep -v "^market data:"
+PASS=$((PASS + $(echo "$out" | grep -c '^PASS')))
+FAIL=$((FAIL + $(echo "$out" | grep -c '^FAIL')))
+echo "$out" | grep -q '^market tests done' || { echo "FAIL market tests didn't finish"; FAIL=$((FAIL + 1)); }
+
+echo "=== market: downloaded once a period, retried after failure, never blocks publishing ==="
+setup
+"$PY" -I "$T/market_fixture.py" "$W/files" 2026-10
+python3 -I -u -m http.server 0 --bind 127.0.0.1 --directory "$W/files" > "$W/http.log" 2>&1 &
+HTTP=$!
+for n in 1 2 3 4 5 6 7 8 9 10; do grep -q "Serving HTTP" "$W/http.log" && break; sleep 0.5; done
+PORT=$(sed -n 's/.* port \([0-9]*\) .*/\1/p' "$W/http.log")
+mk() { NYC_RENTMAP_ZILLOW_ZIP_RENTS_URL="http://127.0.0.1:$PORT/zillow/zip_rents.csv" NYC_RENTMAP_STREETEASY_RENTALS_URL="http://127.0.0.1:$PORT/streeteasy" run "$1" "$2"; }
+gets() { grep -c '"GET ' "$W/http.log"; }
+out=$(run normal 2026-11-22); echo "$out" | grep RESULT
+check "not configured: no downloads, nothing stored" '[ "$(gets)" = 0 ] && [ ! -e "$W/data/market" ] && echo "$out" | grep -q "RESULT ok"'
+mv "$W/files/streeteasy/TwoBd/rentalInventory_TwoBd.zip" "$W/held.zip"
+out=$(mk normal 2026-11-23); echo "$out" | grep -E "RESULT|market data"
+check "one file missing: the run fails and names it, after publishing and without spending calls" 'echo "$out" | grep -q "RESULT stopped: market data: streeteasy: rentalInventory_TwoBd.zip: HTTP Error 404" && grep -q "\"published\": \"" "$W"/data/runs/2026-11-21.json && [ "$(calls)" = 23 ]'
+check "the complete source is stored, the incomplete one isn't" '[ -s "$W/data/market/zillow/zip_rents.csv" ] && [ ! -e "$W/data/market/streeteasy" ] && ! grep -q "\"market_data\"" "$W"/data/runs/2026-11-21.json'
+mv "$W/held.zip" "$W/files/streeteasy/TwoBd/rentalInventory_TwoBd.zip"
+out=$(mk normal 2026-11-24); echo "$out" | grep -E "RESULT|market data"
+check "next day: retried, stored and recorded" 'echo "$out" | grep -q "RESULT ok" && [ "$(ls "$W/data/market/streeteasy" | wc -l | tr -d " ")" = 9 ] && grep -q "\"market_data\": \"[0-9a-f]\{16\}\"" "$W"/data/runs/2026-11-21.json && grep -q "\"published\": \"" "$W"/data/runs/2026-11-21.json'
+before=$(gets)
+out=$(mk normal 2026-11-25); echo "$out" | grep RESULT
+check "later days: no requests" '[ "$(gets)" = "$before" ] && echo "$out" | grep -q "RESULT ok"'
+out=$(mk mainpublish 2026-11-26); echo "$out" | grep RESULT
+check "manual publish: no requests when the period already has its data" '[ "$(gets)" = "$before" ] && echo "$out" | grep -q "RESULT ok"'
+rm -rf "$W/data/market"; python3 -I -c "import json,sys; p=sys.argv[1]; d=json.load(open(p)); del d['market_data']; json.dump(d, open(p,'w'))" "$W/data/runs/2026-11-21.json"
+out=$(mk mainpublish 2026-11-26); echo "$out" | grep RESULT
+check "manual publish: downloads what the period lacks, ten requests" '[ "$(gets)" = $((before + 10)) ] && [ -d "$W/data/market/zillow" ] && echo "$out" | grep -q "RESULT ok"'
+"$PY" -I "$T/market_fixture.py" "$W/files" 2026-11
+out=$(mk normal 2026-12-22); echo "$out" | grep -E "RESULT|market data"
+check "new period: downloaded again after collecting, ten requests" '[ "$(gets)" = $((before + 20)) ] && echo "$out" | grep -q "streeteasy updated through 2026-11" && [ "$(calls)" = 46 ] && echo "$out" | grep -q "RESULT ok"'
+kill $HTTP; wait $HTTP 2>/dev/null
+
+}
+
+ALL_GROUPS="publish quota failures restart alert areas scrape refilter backup analytics market"
 if [ $# = 0 ]; then set -- $ALL_GROUPS; fi
 for g in "$@"; do
   case " $ALL_GROUPS " in

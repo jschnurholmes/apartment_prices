@@ -19,6 +19,11 @@ RENTMAP_CITY=nyc into site/, and force-pushes that directory as a single
 commit to the gh-pages branch (skipped if nothing changed).  If publishing
 fails, the next run retries it without collecting again.
 
+Before building, the run downloads the Zillow and StreetEasy files that are
+configured (see market_data.py), once per billing period. If that fails, the
+site is still published with the last good copies, then the run fails and the
+next one retries.
+
 Then, if NYC_RENTMAP_BACKUP_DIR names a clone of a backup repository, each
 collected period's raw responses and ledger are committed there as
 <period>.tar.xz and pushed; a failed backup is retried by the next run.
@@ -61,6 +66,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 sys.path.insert(1, ROOT)
 import city_areas
+import market_data
 import rentcast_client
 import rentcast_quota
 
@@ -71,7 +77,7 @@ ROOM_MAX_SQFT = 200
 ROOM_MAX_RENT = 2000
 ROOM_MAX_RENT_PER_BEDROOM = 400
 BACKUP_DIR = os.environ.get("NYC_RENTMAP_BACKUP_DIR")
-LEDGER_FIELDS_NOT_BACKED_UP = ("published", "published_at", "scrape_filter", "backed_up")
+LEDGER_FIELDS_NOT_BACKED_UP = ("published", "published_at", "scrape_filter", "backed_up", "market_data")
 
 
 class RunStop(Exception):
@@ -410,6 +416,28 @@ def build_fingerprint(repo):
     return h.hexdigest()[:16]
 
 
+def refresh_market_data(data_dir, ledger):
+    """Download the market data if this period hasn't; returns a failure message or None.
+
+    The ledger's "published" mark is cleared so that new data is published.
+    """
+    if not market_data.configured():
+        return None
+    try:
+        want = market_data.config_id()
+        if ledger.s.get("market_data") == want:
+            return None
+        failures = market_data.refresh(data_dir)
+    except market_data.MarketDataError as e:
+        return str(e)
+    if len(failures) < len(market_data.sources()):
+        ledger.s.pop("published", None)
+    if not failures:
+        ledger.s["market_data"] = want
+    ledger.save()
+    return "; ".join(failures) or None
+
+
 def build_and_publish(repo, data_dir, git, label):
     site = os.path.join(data_dir, "site")
     os.makedirs(site, exist_ok=True)
@@ -491,9 +519,7 @@ class Collector:
             if led["scrape_ts"] and not os.path.exists(self.scrape_path()):
                 self.write_scrape()
             print("period %s already collected: %d calls spent" % (start, r["spent"]))
-            if led["scrape_ts"] and not led.get("published"):
-                self.publish_site()
-            back_up_periods(self.data_dir)
+            self.finish()
             return
         for c in led["calls"]:
             if c["state"] == "sending":
@@ -528,8 +554,18 @@ class Collector:
         self.git.commit_and_push(self.quota_rel, "Close RentCast reservation for %s: %d calls spent"
                                  % (start, spent))
         print("spent %d calls for period %s" % (spent, start))
-        self.publish_site()
+        self.finish()
+
+    def finish(self):
+        led = self.ledger.s
+        failure = None
+        if led["scrape_ts"]:
+            failure = refresh_market_data(self.data_dir, self.ledger)
+            if not led.get("published"):
+                self.publish_site()
         back_up_periods(self.data_dir)
+        if failure:
+            raise RunStop("market data: %s" % failure)
 
     def publish_site(self):
         self.ledger.s["published"] = build_and_publish(
@@ -696,6 +732,8 @@ def main(argv):
             for name, st in s["passes"].items():
                 print("  %-15s %-10s total=%s pages=%s" % (name, st["status"], st.get("total"), st.get("pages")))
             print("  published: %s" % s.get("published", "not yet"))
+            print("  market data: %s" % ("fetched" if s.get("market_data") else
+                                         "not yet" if market_data.configured() else "off"))
             print("  backed up: %s" % (s.get("backed_up") or ("not yet" if BACKUP_DIR else "backups off")))
         else:
             print("  no run yet this period")
@@ -717,7 +755,11 @@ def main(argv):
                 git = Git(repo)
                 restart_if_updated(git.sync())
                 refilter_scrapes(data_dir, ScrapeFilter())
+                collected = [x for x in ledgers(data_dir) if x.s["period_start"] in closed_periods()]
+                failure = refresh_market_data(data_dir, collected[-1]) if collected else None
                 build_and_publish(repo, data_dir, git, "manual rebuild")
+                if failure:
+                    raise RunStop("market data: %s" % failure)
             else:
                 Collector(repo, data_dir, key).run()
         except (RunStop, rentcast_quota.QuotaError) as e:
