@@ -19,12 +19,12 @@ setup() {
   git -C "$W/seed" -c user.name=t -c user.email=t@t commit -q -m seed
   git -C "$W/seed" remote add origin "$W/origin.git"
   git -C "$W/seed" push -q origin master
-  for c in pi laptop; do
+  for c in server laptop; do
     git clone -q "$W/origin.git" "$W/$c"
     git -C "$W/$c" config user.name "$c"; git -C "$W/$c" config user.email "$c@test"
   done
 }
-run() { "$PY" -I "$T/scenario.py" "$W/pi" "$W/data" "$1" "$2" 2>&1; }
+run() { "$PY" -I "$T/scenario.py" "$W/server" "$W/data" "$1" "$2" 2>&1; }
 pages_commits() { git -C "$W/origin.git" rev-list --count gh-pages 2>/dev/null || echo 0; }
 pages_file() { git -C "$W/origin.git" show "gh-pages:$1" 2>/dev/null; }
 calls() { [ -f "$W/data/fake_calls.log" ] && wc -l < "$W/data/fake_calls.log" | tr -d ' ' || echo 0; }
@@ -87,13 +87,13 @@ check "gh-pages and its CNAME untouched" '[ "$(git -C "$W/origin.git" rev-parse 
 
 echo "=== publish: build failure: collection kept, publish retried next day ==="
 setup
-mv "$W/pi/cities/nyc_housing_mask.png" "$W/mask.bak"
+mv "$W/server/cities/nyc_housing_mask.png" "$W/mask.bak"
 out=$(run normal 2026-11-22); echo "$out" | grep -E "RESULT|spent"
 check "collection closed despite build failure" '[ "$(calls)" = 23 ] && [ "$(origin_q)" = "32 closed 23 23" ] && echo "$out" | grep -q "RESULT stopped: site build failed"'
 out=$(wd 2026-11-23); echo "$out"
 check "watchdog fails a collected but unpublished period" 'echo "$out" | grep -q "^FAIL: period 2026-11-21: collected (23 calls) but not published since" && echo "$out" | grep -q "exit=1"'
 check "nothing published, ledger not marked" '[ "$(pages_commits)" = 0 ] && ! grep -q "\"published\"" "$W"/data/runs/2026-11-21.json'
-mv "$W/mask.bak" "$W/pi/cities/nyc_housing_mask.png"
+mv "$W/mask.bak" "$W/server/cities/nyc_housing_mask.png"
 out=$(run normal 2026-11-23); echo "$out" | grep -E "RESULT|already|gh-pages"
 check "next day publishes without collecting again" '[ "$(calls)" = 23 ] && [ "$(pages_commits)" = 1 ] && echo "$out" | grep -q "already collected"'
 out=$(wd 2026-11-24); echo "$out"
@@ -255,8 +255,8 @@ echo "=== backup: backups: one archive per period, retried after failure, full r
 setup
 git init -q --bare -b main "$W/backup.git"
 git clone -q "$W/backup.git" "$W/backup" 2>/dev/null
-git -C "$W/backup" config user.name pi; git -C "$W/backup" config user.email pi@test
-bk() { NYC_RENTMAP_BACKUP_DIR="$W/backup" "$PY" -I "$T/scenario.py" "$W/pi" "$W/data" "$1" "$2" 2>&1; }
+git -C "$W/backup" config user.name server; git -C "$W/backup" config user.email server@test
+bk() { NYC_RENTMAP_BACKUP_DIR="$W/backup" "$PY" -I "$T/scenario.py" "$W/server" "$W/data" "$1" "$2" 2>&1; }
 backups() { git -C "$W/backup.git" rev-list --count main 2>/dev/null || echo 0; }
 mv "$W/backup.git" "$W/backup.offline"
 out=$(bk normal 2026-11-22); echo "$out" | grep -E "RESULT|backed up"
