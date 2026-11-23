@@ -288,8 +288,8 @@ before=$(git -C "$W/origin.git" rev-parse gh-pages)
 before_tree=$(git -C "$W/origin.git" rev-parse "gh-pages^{tree}")
 out=$(RENTMAP_GOATCOUNTER_URL=https://test.goatcounter.com/count run publish 2026-11-25); echo "$out" | grep -E "RESULT|gh-pages"
 check "setting the count URL republishes without a full rebuild" 'echo "$out" | grep -q "RESULT ok" && [ "$(git -C "$W/origin.git" rev-parse gh-pages)" != "$before" ] && ! echo "$out" | grep -q "rebuilding every month"'
-check "both pages carry the tag once, right before </body>" 'for f in index.html trends.html; do [ "$(pages_file $f | grep -cF "$TAG")" = 1 ] && pages_file $f | grep -A1 -F "$TAG" | tail -1 | grep -q "^</body>" || exit 1; done'
-check "pages otherwise unchanged" 'for f in index.html trends.html; do pages_file $f | grep -vF "$TAG" | sed "s/<title>NYC /<title>Boston /" | cmp -s - "$REPO/site/$f" || exit 1; done'
+check "both pages carry the tag once, right before </body>" '(for f in index.html trends.html; do [ "$(pages_file $f | grep -cF "$TAG")" = 1 ] && pages_file $f | grep -A1 -F "$TAG" | tail -1 | grep -q "^</body>" || exit 1; done)'
+check "pages otherwise unchanged" '(for f in index.html trends.html; do pages_file $f | grep -vF "$TAG" | sed "s/<title>NYC /<title>Boston /" | cmp -s - "$REPO/site/$f" || exit 1; done)'
 with=$(git -C "$W/origin.git" rev-parse gh-pages)
 out=$(RENTMAP_GOATCOUNTER_URL='https://x.goatcounter.com/count"><script>' run publish 2026-11-25); echo "$out" | grep -E "RESULT"
 check "a malformed URL stops the build before publishing" 'echo "$out" | grep -q "RESULT stopped: site build failed: RENTMAP_GOATCOUNTER_URL must be an https URL" && [ "$(git -C "$W/origin.git" rev-parse gh-pages)" = "$with" ]'
