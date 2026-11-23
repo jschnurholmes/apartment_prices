@@ -121,8 +121,10 @@ path in `nyc/deploy/nyc-rentmap` before installing it.
    It should print the billing period, the quota (matching the RentCast
    dashboard), and "no run yet this period".
 
-8. Enable the timer. **This starts real collection:** the next daily check
-   runs a collection if the period is due, spending RentCast calls.
+8. Enable the timer. **This starts real collection:** the daily check runs
+   between 9:00 and 9:30 AM Eastern (10:00 to 10:30 AM during daylight saving
+   time), and the next one collects if the period is due, spending RentCast
+   calls.
 
    ```bash
    sudo systemctl enable --now nyc-rentmap.timer
@@ -132,43 +134,231 @@ path in `nyc/deploy/nyc-rentmap` before installing it.
    runs with `journalctl -u nyc-rentmap.service`.
 
 9. After the first run has published (the `gh-pages` branch exists on
-   GitHub), turn on GitHub Pages once: in this repository, **Settings** →
-   **Pages** → under "Build and deployment", set "Source" to
-   **Deploy from a branch**, choose the `gh-pages` branch and the "/(root)"
-   folder, and click **Save**. The site is then at
-   https://jschnurholmes.github.io/apartment_prices/.
+   GitHub), turn on GitHub Pages once. In this repository on GitHub, click
+   **Settings**, then **Pages** in the sidebar. Under "Build and deployment",
+   set "Source" to **Deploy from a branch**, choose `gh-pages` in the branch
+   dropdown, set the folder dropdown to the root of the branch (not `/docs`),
+   and click **Save**.
 
-## Upgrading a Pi set up before publishing existed
+   To confirm the site deployed, open the repository's **Actions** tab on
+   GitHub. Every push to `gh-pages` starts a Pages deployment run there; a
+   failed run means the site wasn't updated.
 
-Publishing added numpy, scipy, and pillow to the image and a `publish` command
-to the wrapper. On a Pi that already completed the setup above:
+## Updating the Pi
 
-1. Pull the new code into the clone, which otherwise only updates when a run
-   starts:
+Follow this after pushing any change to `master` that the Pi should run. Run
+every step every time: a daily run may already have pulled the new code, so
+the pull alone can't tell you whether the image or the installed files are out
+of date. Each step is safe to repeat.
+
+1. Pause the daily check and make sure no run is in progress:
+
+   ```bash
+   sudo systemctl stop nyc-rentmap.timer
+   systemctl is-active nyc-rentmap.service
+   ```
+
+   The second command prints `activating` while a run is in progress. Repeat
+   it every minute or so until it prints `inactive` or `failed` (`failed` only
+   means the last run failed). Runs start between 9:00 and 9:30 AM Eastern
+   (10:00 to 10:30 AM during daylight saving time) and take a few minutes.
+   Stopping the timer doesn't cut off a run in progress, and a check that
+   comes due while the timer is paused runs as soon as step 7 restarts it.
+
+2. Pull the new code and confirm the clone has it:
 
    ```bash
    sudo -u rentmap git -C /srv/nyc-rentmap/repo pull --ff-only
+   sudo -u rentmap git -C /srv/nyc-rentmap/repo log -1 --oneline
    ```
 
-2. Rebuild the image (step 5) and reinstall the wrapper and units (step 6).
-3. Publish once with `sudo nyc-rentmap publish`, or wait for the next daily
-   check, then do step 9.
+   The second command must show the newest commit at
+   https://github.com/jschnurholmes/apartment_prices/commits/master. If the
+   pull fails, follow "If the pull fails" below, then repeat this step.
 
-The site build peaked at about 1.5 GB of memory in testing (2000-pixel map).
-Check the Pi has that much free with `free -h`; a 1 or 2 GB Pi may fail or
-swap heavily during the build.
+3. Compare the files that run as root with the installed copies:
+
+   ```bash
+   sudo diff -u /usr/local/sbin/nyc-rentmap /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap
+   sudo diff -u /etc/systemd/system/nyc-rentmap.service /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap.service
+   sudo diff -u /etc/systemd/system/nyc-rentmap.timer /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap.timer
+   ```
+
+   No output means that file is unchanged. Lines starting with `+` are what
+   step 5 installs; read them before continuing.
+
+4. Rebuild the image:
+
+   ```bash
+   sudo docker build -t nyc-rentmap:latest --build-arg UID="$(id -u rentmap)" --build-arg GID="$(id -g rentmap)" /srv/nyc-rentmap/repo/nyc/docker
+   ```
+
+   If `nyc/docker/` didn't change, Docker reuses its cached layers and this
+   finishes in seconds.
+
+5. Install the wrapper and systemd units:
+
+   ```bash
+   sudo install -m 755 /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap /usr/local/sbin/nyc-rentmap
+   sudo install -m 644 /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap.service /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap.timer /etc/systemd/system/
+   sudo systemctl daemon-reload
+   ```
+
+6. If the update changes the site (`cities/`, `site/`, or the build code),
+   republish now; otherwise skip this, and the site is rebuilt after the next
+   collection. This spends no RentCast calls:
+
+   ```bash
+   sudo nyc-rentmap publish
+   ```
+
+   It prints `gh-pages unchanged` if the rebuilt site is identical to the
+   published one. If it prints `gh-pages updated to ...`, open the
+   repository's **Actions** tab on GitHub and check that the newest Pages
+   deployment run succeeded.
+
+7. Resume the daily check and confirm the state:
+
+   ```bash
+   sudo systemctl start nyc-rentmap.timer
+   systemctl list-timers nyc-rentmap.timer
+   sudo nyc-rentmap status
+   ```
+
+   `list-timers` shows the next check under `NEXT`, in the Pi's system time
+   zone (`timedatectl` shows which). `status` spends no calls; it prints the
+   billing period, the quota, this period's passes, and the `published`
+   commit.
+
+### If the pull fails
+
+The timer stays paused (step 1) while you do this. What to do depends on the
+error `pull` printed.
+
+**`Could not resolve host`, `Permission denied (publickey)`, or
+`Host key verification failed`:** the Pi can't reach GitHub, or GitHub
+rejected the deploy key, or the host keys don't match. Check the Pi's network
+connection and that the deploy key is still listed, with write access, in this
+repository's deploy key settings on GitHub. For a host key error, compare the
+fingerprints from `sudo ssh-keygen -lf /srv/nyc-rentmap/secrets/known_hosts`
+with
+https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints.
+Then repeat step 2.
+
+**`Not possible to fast-forward`, `divergent branches`, or a message that
+local changes would be overwritten:** the clone has quota changes from a run
+that didn't reach GitHub. See what they are:
+
+```bash
+sudo -u rentmap git -C /srv/nyc-rentmap/repo fetch origin
+sudo -u rentmap git -C /srv/nyc-rentmap/repo status --short
+sudo -u rentmap git -C /srv/nyc-rentmap/repo log --oneline origin/master..HEAD
+```
+
+1. `status --short` lists uncommitted changes. Runs only ever change
+   `nyc/rentcast_quota.json`; if it's listed, commit it the way the next run
+   would:
+
+   ```bash
+   sudo -u rentmap git -C /srv/nyc-rentmap/repo commit -m "Commit quota changes left by an interrupted run" -- nyc/rentcast_quota.json
+   ```
+
+   Any other file listed was edited by hand in the clone. The rebase below
+   refuses to run until it's gone; once you know the edit isn't needed,
+   discard it with
+   `sudo -u rentmap git -C /srv/nyc-rentmap/repo checkout -- PATH`, replacing
+   `PATH` with the listed path.
+
+2. `log` lists commits the Pi has and GitHub doesn't. They should all be
+   quota commits ("Reserve ...", "Close ...", or "Commit quota changes ...").
+   Move them on top of GitHub's commits and push them:
+
+   ```bash
+   sudo -u rentmap git -C /srv/nyc-rentmap/repo rebase origin/master
+   sudo -u rentmap git -C /srv/nyc-rentmap/repo push origin HEAD:master
+   ```
+
+   Then repeat step 2.
+
+3. If the rebase stops with
+   `CONFLICT (content): Merge conflict in nyc/rentcast_quota.json`, the quota
+   tracker was changed both on the Pi and elsewhere (usually manual usage
+   recorded from another clone). Open the file as `rentmap`:
+
+   ```bash
+   sudoedit -u rentmap /srv/nyc-rentmap/repo/nyc/rentcast_quota.json
+   ```
+
+   Delete the `<<<<<<<`, `=======`, and `>>>>>>>` lines and keep the entries
+   from both sides, so `external_usage` and `reservations` each list every
+   entry, with a comma between entries. Check the file is valid JSON (no
+   output means it is), then finish the rebase and push:
+
+   ```bash
+   sudo -u rentmap python3 -I -m json.tool /srv/nyc-rentmap/repo/nyc/rentcast_quota.json > /dev/null
+   sudo -u rentmap git -C /srv/nyc-rentmap/repo add nyc/rentcast_quota.json
+   sudo -u rentmap env GIT_EDITOR=true git -C /srv/nyc-rentmap/repo rebase --continue
+   sudo -u rentmap git -C /srv/nyc-rentmap/repo push origin HEAD:master
+   ```
+
+   If the rebase stops again on a later commit, repeat this for each stop.
+   Then repeat step 2.
+
+To back out of a rebase at any point, run
+`sudo -u rentmap git -C /srv/nyc-rentmap/repo rebase --abort`, and resume the
+timer with `sudo systemctl start nyc-rentmap.timer`.
+
+### First update after publishing was added
+
+A Pi set up before publishing existed needs three extra things, because
+publishing added numpy, scipy, and pillow to the image, a `publish` command to
+the wrapper, and the `gh-pages` branch:
+
+1. Before starting, check memory with `free -h`. The site build peaked at
+   about 1.5 GB in testing (2000-pixel map), so the `available` column should
+   show at least that; a 1 or 2 GB Pi may fail or swap heavily.
+2. Don't skip step 6 above: run `sudo nyc-rentmap publish` to build the site
+   from the data already collected and create the `gh-pages` branch. Step 7's
+   `status` should then show `published:` followed by a commit ID.
+3. After step 7, turn on GitHub Pages once. In this repository on GitHub,
+   click **Settings**, then **Pages** in the sidebar. Under
+   "Build and deployment", set "Source" to **Deploy from a branch**, choose
+   `gh-pages` in the branch dropdown, set the folder dropdown to the root of
+   the branch (not `/docs`), and click **Save**. Then open the repository's
+   **Actions** tab and check that the Pages deployment run succeeded.
 
 ## Day to day
 
-- **Code updates** arrive by `git pull` at the start of each run. Changes to
-  `nyc/deploy/` need reinstalling (step 6) and changes to `nyc/docker/` need a
-  rebuild (step 5); first pull them with
-  `sudo -u rentmap git -C /srv/nyc-rentmap/repo pull --ff-only`, since the
-  clone may not have them yet.
-- **Manual RentCast calls** made anywhere must be recorded in the committed
-  tracker: pull, run `python3 -I nyc/rentcast_quota.py add-usage N --note "..."`,
-  commit, and push. To match the dashboard exactly, use
-  `set-usage-before-run N` instead.
+- **Code updates:** each run pulls new commits and restarts onto them, so
+  changes to the Python code and settings take effect in that same run.
+  Changes to `nyc/deploy/` and `nyc/docker/` take effect only through
+  "Updating the Pi" above.
+- **Manual RentCast calls** made anywhere other than the Pi's runs must be
+  recorded in the committed tracker before the Pi's next run; otherwise the
+  run believes more quota is left than there is. From the top folder of a
+  clone of this repo on another computer, outside the daily check's window:
+
+  ```bash
+  git pull --ff-only
+  python3 -I nyc/rentcast_quota.py add-usage N --note "what the calls were for"
+  git commit -m "Record N manual RentCast calls" -- nyc/rentcast_quota.json
+  git push
+  ```
+
+  Replace `N` with the number of calls, in both places. Without
+  `--date YYYY-MM-DD`, the calls are recorded as made today. If the push is
+  rejected because the Pi pushed in the meantime, run `git pull --rebase` and
+  `git push` again.
+
+  To make the tracker match the RentCast dashboard instead, run
+  `python3 -I nyc/rentcast_quota.py status` and subtract its
+  "used by monthly run" figure from the dashboard's count. Record the result
+  with `set-usage-before-run`, which replaces this period's manual usage
+  rather than adding to it, then commit and push as above:
+
+  ```bash
+  python3 -I nyc/rentcast_quota.py set-usage-before-run N --note "match dashboard"
+  ```
 - **A failed run** (non-zero exit, visible in `systemctl --failed`) leaves its
   reservation open, so usage is overstated, never understated; the next daily
   check resumes it.
