@@ -53,6 +53,29 @@ ZIP_CHECKS += [
      and not flt.keep({"stateFips": "36", "countyFips": "059", "latitude": 40.7473, "longitude": -73.6631})),
     ("home counts match the housing mask's 4,000,922 to within 100", lambda: abs(sum(z["units"] for z in zips) - 4000922) < 100),
 ]
+with open(os.path.join(os.path.dirname(HERE), "..", "cities", "nyc_streeteasy.json")) as f:
+    hoods = json.load(f)["neighborhoods"]
+PREFIXES = {"Manhattan": ("100", "101", "102"), "Bronx": ("104",), "Brooklyn": ("112",),
+            "Queens": ("110", "111", "113", "114", "116")}
+
+
+def misplaced():
+    """Neighborhoods whose position isn't within about 150 m of their borough's ZIPs. Marble Hill is Manhattan's, in a Bronx ZIP."""
+    steps = [(0, 0), (0.0015, 0), (-0.0015, 0), (0, 0.0015), (0, -0.0015)]
+    return [h["name"] for h in hoods if h["name"] != "Marble Hill" and not any(
+        (zip_at(h["pos"][0] + dy, h["pos"][1] + dx) or "").startswith(PREFIXES[h["borough"]]) for dy, dx in steps)]
+
+
+def overlapping():
+    return [(a["name"], b["name"]) for i, a in enumerate(hoods) for b in hoods[i + 1:]
+            if abs(a["pos"][0] - b["pos"][0]) < 0.0025 and abs(a["pos"][1] - b["pos"][1]) < 0.0025]
+
+
+ZIP_CHECKS += [
+    ("176 StreetEasy neighborhoods have positions, each once", lambda: len(hoods) == len({(h["borough"], h["name"]) for h in hoods}) == 176),
+    ("each position is in its own borough", lambda: misplaced() == []),
+    ("no two positions are close enough to hide each other", lambda: overlapping() == []),
+]
 for name, test in ZIP_CHECKS:
     try:
         ok = bool(test())

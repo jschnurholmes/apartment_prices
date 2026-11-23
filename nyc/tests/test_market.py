@@ -127,6 +127,17 @@ check("Zillow site data: every ZIP has its outline", lambda: all(len(z["rings"][
 check("Zillow site data: the citywide median is weighted by homes", lambda: weighted() and zillow_built()["city"] == [3000, 5000])
 
 
+def positioned(borough):
+    blank = {b: [None] for b in range(4)}
+    data = {"months": ["2026-10"], "index": {"months": ["2026-10"], "series": {}},
+            "areas": [{"name": "Soho", "borough": borough, "kind": "neighborhood", "rent": blank, "n": blank}]}
+    return build_market.streeteasy(data, {})["areas"][0].get("pos")
+
+
+check("site data: a neighborhood carries its position", lambda: positioned("Manhattan") == [40.7233, -74.002])
+check("site data: a same-named one in another borough doesn't", lambda: positioned("Queens") is None)
+
+
 def archived():
     led = {"period_start": "2026-11-21", "calls": [], "market_data": "0123456789abcdef", "scrape_ts": 1}
     with tempfile.TemporaryDirectory() as d:

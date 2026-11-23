@@ -20,6 +20,7 @@ import build_rentmap
 import market_data
 
 ZIPS = os.path.join(os.path.dirname(HERE), "cities", "nyc_zips.json")
+POSITIONS = os.path.join(os.path.dirname(HERE), "cities", "nyc_streeteasy.json")
 
 
 def rounded(v):
@@ -49,8 +50,13 @@ def zillow(data, cpi):
 
 
 def streeteasy(data, cpi):
-    """Rents are in $10 steps; a negative one is a 3-month figure from too few listings."""
-    areas = []
+    """Rents are in $10 steps; a negative one is a 3-month figure from too few listings.
+
+    "pos" is where a neighborhood's dot goes; one without a known position gets no dot.
+    """
+    with open(POSITIONS) as f:
+        pos = {(p["borough"], p["name"]): p["pos"] for p in json.load(f)["neighborhoods"]}
+    areas, lost = [], []
     for a in data["areas"]:
         rent = {}
         for b in sorted(a["rent"]):
@@ -58,6 +64,13 @@ def streeteasy(data, cpi):
                             for v, thin in market_data.pooled(a["rent"][b], a["n"][b])]
         areas.append({"name": a["name"], "borough": a["borough"], "kind": a["kind"], "rent": rent,
                       "n": {str(b): [int(n or 0) for n in a["n"][b]] for b in sorted(a["n"])}})
+        if a["kind"] == "neighborhood":
+            if (a["borough"], a["name"]) in pos:
+                areas[-1]["pos"] = pos[a["borough"], a["name"]]
+            else:
+                lost.append(a["name"])
+    if lost:
+        print("market data: no map position for %s" % ", ".join(lost))
     index = data["index"]
     return dict(cpi_fields(cpi, data["months"]), months=data["months"], min_listings=market_data.MIN_LISTINGS,
                 areas=areas, index=dict(months=index["months"],
