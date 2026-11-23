@@ -14,6 +14,9 @@ when available).  For each full scrape this writes, into OUT_DIR:
 plus dates.json, trends.json, rents_over_time_new.tsv, cpi.csv, and copies
 of site/*.html and housing_mask.png.
 
+If RENTMAP_GOATCOUNTER_URL is set (https://CODE.goatcounter.com/count), the
+copied pages get GoatCounter's counting script.
+
 Each month depends only on scrapes up to that month, so existing outputs are
 reused unless the model parameters changed or --force is given.  A month is
 written atomically (temp file + rename) so a crash never leaves a half-written
@@ -26,6 +29,7 @@ import io
 import json
 import math
 import os
+import re
 import shutil
 import sys
 import time
@@ -156,6 +160,16 @@ def build_trends(out_dir, dates, cpi):
                  buf.getvalue())
 
 
+def analytics_tag(url):
+    if not url:
+        return b""
+    if not re.fullmatch(r"https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?", url):
+        sys.exit("RENTMAP_GOATCOUNTER_URL must be an https URL like "
+                 "https://CODE.goatcounter.com/count, got %r" % url)
+    return ('<script data-goatcounter="%s" async src="//gc.zgo.at/count.js"></script>\n'
+            % html.escape(url)).encode()
+
+
 def main(argv):
     force = "--force" in argv
     args = [a for a in argv if not a.startswith("--")]
@@ -164,6 +178,7 @@ def main(argv):
         sys.exit(1)
     data_dir, out_dir = args
     os.makedirs(out_dir, exist_ok=True)
+    analytics = analytics_tag(os.environ.get("RENTMAP_GOATCOUNTER_URL", "").strip())
 
     t0 = time.time()
     ds = rentmap.Dataset(data_dir)
@@ -177,7 +192,8 @@ def main(argv):
         src, dst = os.path.join(HERE, "site", fn), os.path.join(out_dir, fn)
         if fn.endswith(".html"):
             with open(src, "rb") as f:
-                atomic_write(dst, f.read().replace(b"<title>Boston ", title, 1), "wb")
+                page = f.read().replace(b"<title>Boston ", title, 1)
+                atomic_write(dst, page.replace(b"</body>", analytics + b"</body>", 1), "wb")
         else:
             shutil.copy(src, dst)
     shutil.copy(os.path.join(HERE, rentmap.CITY["mask"]),

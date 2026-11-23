@@ -33,6 +33,7 @@ docstrings in `collect.py` and `rentcast_quota.py`.
 | `/srv/nyc-rentmap/secrets/telegram.env` | `root`, 600 | `TELEGRAM_BOT_TOKEN=...` and `TELEGRAM_CHAT_ID=...`, for failure alerts |
 | `/srv/nyc-rentmap/backup` | `rentmap` | clone of the private backup repository; the container pushes `<period>.tar.xz` archives here |
 | `/srv/nyc-rentmap/secrets/backup_key` | `rentmap`, 600 | SSH deploy key with write access to the backup repository only |
+| `/srv/nyc-rentmap/site.env` | `root`, 644 | optional: `RENTMAP_GOATCOUNTER_URL=...`, to count visits with GoatCounter |
 | `/usr/local/sbin/nyc-rentmap` | `root` | wrapper that starts the container (installed copy of `nyc/deploy/nyc-rentmap`) |
 | `/usr/local/sbin/nyc-rentmap-alert` | `root` | sends a Telegram message when a run fails (installed copy of `nyc/deploy/nyc-rentmap-alert`) |
 | `/etc/systemd/system/nyc-rentmap.{service,timer}`, `nyc-rentmap-alert.service` | `root` | installed copies of `nyc/deploy/` |
@@ -266,6 +267,18 @@ at least that.
        `status` should show `backed up:` followed by a commit ID, and the
        private repository should have a `<period>.tar.xz` file for each
        collected period.
+13. Optionally, count visits with [GoatCounter](https://www.goatcounter.com/).
+    Sign up there; your site's snippet contains a count URL like
+    `https://CODE.goatcounter.com/count`. Put it in `site.env`, so it
+    stays out of this repository, and republish:
+
+    ```bash
+    echo 'RENTMAP_GOATCOUNTER_URL=https://CODE.goatcounter.com/count' | sudo tee /srv/nyc-rentmap/site.env
+    sudo nyc-rentmap publish
+    ```
+
+    Every build then adds GoatCounter's script to the pages. To stop
+    counting, delete `site.env` and run `sudo nyc-rentmap publish` again.
 
 ## Updating the Pi
 

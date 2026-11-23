@@ -252,5 +252,20 @@ check "restore unpacked the ledger and 23 raw responses" 'echo "$out" | grep -q 
 out=$(bk mainpublish 2026-11-25); echo "$out" | grep -E "RESULT|wrote|gh-pages"
 check "publish after restore rebuilt the scrape and an identical site" 'echo "$out" | grep -q "(8056 listings;" && echo "$out" | grep -q "gh-pages unchanged" && [ "$(git -C "$W/origin.git" rev-parse gh-pages)" = "$pages" ]'
 
+echo "=== 13. GoatCounter tag added only when configured ==="
+TAG='<script data-goatcounter="https://test.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>'
+before=$(git -C "$W/origin.git" rev-parse gh-pages)
+before_tree=$(git -C "$W/origin.git" rev-parse "gh-pages^{tree}")
+out=$(RENTMAP_GOATCOUNTER_URL=https://test.goatcounter.com/count run publish 2026-11-25); echo "$out" | grep -E "RESULT|gh-pages"
+check "setting the count URL republishes without a full rebuild" 'echo "$out" | grep -q "RESULT ok" && [ "$(git -C "$W/origin.git" rev-parse gh-pages)" != "$before" ] && ! echo "$out" | grep -q "rebuilding every month"'
+check "both pages carry the tag once, right before </body>" 'for f in index.html trends.html; do [ "$(pages_file $f | grep -cF "$TAG")" = 1 ] && pages_file $f | grep -A1 -F "$TAG" | tail -1 | grep -q "^</body>" || exit 1; done'
+check "pages otherwise unchanged" 'for f in index.html trends.html; do pages_file $f | grep -vF "$TAG" | sed "s/<title>NYC /<title>Boston /" | cmp -s - "$REPO/site/$f" || exit 1; done'
+with=$(git -C "$W/origin.git" rev-parse gh-pages)
+out=$(RENTMAP_GOATCOUNTER_URL='https://x.goatcounter.com/count"><script>' run publish 2026-11-25); echo "$out" | grep -E "RESULT"
+check "a malformed URL stops the build before publishing" 'echo "$out" | grep -q "RESULT stopped: site build failed: RENTMAP_GOATCOUNTER_URL must be an https URL" && [ "$(git -C "$W/origin.git" rev-parse gh-pages)" = "$with" ]'
+out=$(run publish 2026-11-25); echo "$out" | grep -E "RESULT|gh-pages"
+check "unsetting it republishes the original files" '[ "$(git -C "$W/origin.git" rev-parse gh-pages)" != "$with" ] && [ "$(git -C "$W/origin.git" rev-parse "gh-pages^{tree}")" = "$before_tree" ] && ! pages_file index.html | grep -q goatcounter'
+check "wrapper script parses" 'sh -n "$REPO/nyc/deploy/nyc-rentmap"'
+
 echo; echo "$PASS passed, $FAIL failed"
 if [ "$FAIL" = 0 ]; then rm -rf "$W"; else echo "test repos kept in $W"; exit 1; fi
