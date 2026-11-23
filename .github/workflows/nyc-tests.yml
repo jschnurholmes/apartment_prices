@@ -1,0 +1,25 @@
+name: NYC tests
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - nyc/rentcast_quota.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Install the container's pinned packages
+        run: pip install $(grep -o '[a-z]*==[0-9.]*' nyc/docker/Dockerfile)
+      - name: Run the full suite
+        run: PYTHON=python bash nyc/tests/run_tests.sh

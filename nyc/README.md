@@ -546,3 +546,7 @@ nyc/tests/run_tests.sh analytics backup
 | `refilter` | rewriting scrapes and rebuilding when the filter changes | 20 s |
 | `backup` | backup archives, retries and restore | 25 s |
 | `analytics` | the optional GoatCounter tag | 20 s |
+
+The `NYC tests` GitHub Actions workflow runs the full suite on Python 3.11
+with the image's pinned packages after every push to `master`, except pushes
+that only change `nyc/rentcast_quota.json`.
