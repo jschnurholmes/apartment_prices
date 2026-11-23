@@ -62,6 +62,8 @@ check "v3 ids contain no whitespace" '! grep "^[0-9]" "$W"/data/v3/apts-*.txt | 
 check "raw responses gzipped on disk (23 files)" '[ "$(ls "$W"/data/raw/2026-11-21/*.json.gz | wc -l | tr -d " ")" = 23 ]'
 check "gh-pages published as one parentless commit" '[ "$(pages_commits)" = 1 ]'
 check "gh-pages has NYC city.json, a month map, pages, .nojekyll" 'pages_file city.json | grep -q "\"name\": \"NYC\"" && git -C "$W/origin.git" ls-tree --name-only gh-pages | grep -q "^rentmap\..*\.png$" && pages_file index.html >/dev/null && pages_file trends.html >/dev/null && git -C "$W/origin.git" ls-tree --name-only gh-pages | grep -qx ".nojekyll"'
+check "published pages are titled NYC" 'pages_file index.html | grep -q "<title>NYC Rent Map</title>" && pages_file trends.html | grep -q "<title>NYC Rent Trends</title>"'
+check "published pages otherwise match the originals byte for byte" 'pages_file index.html | sed "s/<title>NYC /<title>Boston /" | cmp -s - "$REPO/site/index.html" && pages_file trends.html | sed "s/<title>NYC /<title>Boston /" | cmp -s - "$REPO/site/trends.html"'
 check "ledger records the publish" 'grep -q "\"published\": \"[0-9a-f]\{40\}\"" "$W"/data/runs/2026-11-21.json'
 add_cname
 before=$(git -C "$W/origin.git" rev-parse gh-pages)

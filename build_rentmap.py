@@ -21,6 +21,7 @@ month that later runs would skip.
 """
 
 import csv
+import html
 import io
 import json
 import math
@@ -171,8 +172,14 @@ def main(argv):
     dates = build_months(ds, out_dir, force)
     atomic_write(os.path.join(out_dir, "dates.json"), json.dumps(dates))
     build_trends(out_dir, dates, cpi)
+    title = ("<title>%s " % html.escape(rentmap.CITY["name"])).encode()
     for fn in os.listdir(os.path.join(HERE, "site")):
-        shutil.copy(os.path.join(HERE, "site", fn), os.path.join(out_dir, fn))
+        src, dst = os.path.join(HERE, "site", fn), os.path.join(out_dir, fn)
+        if fn.endswith(".html"):
+            with open(src, "rb") as f:
+                atomic_write(dst, f.read().replace(b"<title>Boston ", title, 1), "wb")
+        else:
+            shutil.copy(src, dst)
     shutil.copy(os.path.join(HERE, rentmap.CITY["mask"]),
                 os.path.join(out_dir, "housing_mask.png"))
     atomic_write(os.path.join(out_dir, "city.json"), json.dumps(
