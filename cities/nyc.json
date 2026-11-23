@@ -5,7 +5,7 @@
     "south": 40.4916,
     "west": -74.2615,
     "north": 40.92,
-    "east": -73.6941
+    "east": -73.6705
   },
   "center": {
     "lat": 40.7058,
@@ -16,6 +16,7 @@
   "map_px": 2000,
   "mask": "cities/nyc_housing_mask.png",
   "units": "cities/nyc_housing_units.png",
+  "areas": "cities/nyc_areas.json",
   "mask_counties": [
     "36005",
     "36047",
@@ -65,6 +66,23 @@
     ["Concourse", 40.8267, -73.9217],
     ["Fordham", 40.8587, -73.8991],
     ["Riverdale", 40.8957, -73.9088],
-    ["St. George", 40.6422, -74.0855]
+    ["St. George", 40.6422, -74.0855],
+    ["Jersey City", 40.7114, -74.0648],
+    ["Hoboken", 40.7453, -74.0279],
+    ["Union City", 40.7674, -74.0323],
+    ["North Bergen", 40.7936, -74.025],
+    ["West New York", 40.786, -74.0095],
+    ["Fort Lee", 40.8506, -73.971],
+    ["Cliffside Park", 40.8221, -73.9879],
+    ["Secaucus", 40.782, -74.0676],
+    ["Weehawken", 40.768, -74.017],
+    ["Carteret", 40.5838, -74.2275],
+    ["Palisades Park", 40.847, -73.9971],
+    ["Edgewater", 40.8246, -73.9738],
+    ["Fairview", 40.8211, -74.003],
+    ["Ridgefield Park", 40.8547, -74.0199],
+    ["Guttenberg", 40.7928, -74.0046],
+    ["Valley Stream", 40.6647, -73.7049],
+    ["Floral Park", 40.722, -73.7028]
   ]
 }
