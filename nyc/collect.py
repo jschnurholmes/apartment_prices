@@ -19,28 +19,39 @@ RENTMAP_CITY=nyc into site/, and force-pushes that directory as a single
 commit to the gh-pages branch (skipped if nothing changed).  If publishing
 fails, the next run retries it without collecting again.
 
+Then, if NYC_RENTMAP_BACKUP_DIR names a clone of a backup repository, each
+collected period's raw responses and ledger are committed there as
+<period>.tar.xz and pushed; a failed backup is retried by the next run.
+Everything else can be rebuilt from those archives: `restore` unpacks them
+into the data directory, and `publish` then rewrites the scrapes and the site.
+
 Environment:
-  RENTCAST_API_KEY      RentCast API key
-  NYC_RENTMAP_DATA_DIR  raw responses (raw/), run ledgers (runs/), Jeff's v3
-                        scrape files (v3/apts-<ts>.txt), and the built site/
+  RENTCAST_API_KEY        RentCast API key
+  NYC_RENTMAP_DATA_DIR    raw responses (raw/), run ledgers (runs/), Jeff's v3
+                          scrape files (v3/apts-<ts>.txt), and the built site/
+  NYC_RENTMAP_BACKUP_DIR  optional clone of the backup repository
 
 Usage:
   python3 -I collect.py run      collect if this billing period still needs it
   python3 -I collect.py status   show the period, quota, and this period's run
   python3 -I collect.py publish  rebuild the site and push it to gh-pages
+  python3 -I collect.py restore  unpack the backup clone's archives into the data directory
 """
 
 import datetime
 import fcntl
 import gzip
 import hashlib
+import io
 import json
+import lzma
 import math
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import urllib.error
 import urllib.request
@@ -59,6 +70,8 @@ NYC_COUNTIES = {"36005", "36047", "36061", "36081", "36085"}
 ROOM_MAX_SQFT = 200
 ROOM_MAX_RENT = 2000
 ROOM_MAX_RENT_PER_BEDROOM = 400
+BACKUP_DIR = os.environ.get("NYC_RENTMAP_BACKUP_DIR")
+LEDGER_FIELDS_NOT_BACKED_UP = ("published", "published_at", "scrape_filter", "backed_up")
 
 
 class RunStop(Exception):
@@ -259,21 +272,22 @@ def write_scrape(data_dir, led, flt):
 def refilter_scrapes(data_dir, flt):
     """Rewrite scrapes written under an older filter from their raw responses.
 
-    A rewritten period's ledger loses its "published" mark, so the next run
-    republishes. Returns True if any scrape was rewritten.
+    Also writes the missing scrape of any period whose reservation is closed,
+    as after a restore. A rewritten period's ledger loses its "published"
+    mark, so the next run republishes. Returns True if any scrape was written.
     """
-    runs = os.path.join(data_dir, "runs")
+    closed = closed_periods()
     changed = False
-    for name in sorted(os.listdir(runs)) if os.path.isdir(runs) else []:
-        if not name.endswith(".json"):
-            continue
-        ledger = Ledger(data_dir, name[:-len(".json")])
+    for ledger in ledgers(data_dir):
         led = ledger.s
-        if (not led.get("scrape_ts") or led.get("scrape_filter") == flt.fingerprint
-                or not os.path.exists(scrape_path(data_dir, led))):
+        if not led.get("scrape_ts"):
             continue
-        files = [c["file"] for c in led["calls"] if c["state"] == "done" and c["status"] == 200]
-        if not all(os.path.exists(os.path.join(data_dir, f)) for f in files):
+        if os.path.exists(scrape_path(data_dir, led)):
+            if led.get("scrape_filter") == flt.fingerprint:
+                continue
+        elif led["period_start"] not in closed:
+            continue
+        if not all(os.path.exists(os.path.join(data_dir, f)) for f in raw_files(led)):
             print("can't refilter period %s: its raw responses were pruned" % led["period_start"])
             continue
         write_scrape(data_dir, led, flt)
@@ -281,6 +295,106 @@ def refilter_scrapes(data_dir, flt):
         ledger.save()
         changed = True
     return changed
+
+
+def ledgers(data_dir):
+    runs = os.path.join(data_dir, "runs")
+    names = sorted(os.listdir(runs)) if os.path.isdir(runs) else []
+    return [Ledger(data_dir, n[:-len(".json")]) for n in names if n.endswith(".json")]
+
+
+def closed_periods():
+    return {r["period_start"] for r in rentcast_quota.Quota().state["reservations"]
+            if r["status"] == "closed"}
+
+
+def raw_files(led):
+    return [c["file"] for c in led["calls"] if c["state"] == "done" and c["status"] == 200]
+
+
+def backup_archive(data_dir, led):
+    """A period's ledger and decompressed raw responses as a reproducible tar.xz."""
+    entries = [("runs/%s.json" % led["period_start"],
+                json.dumps({k: v for k, v in led.items() if k not in LEDGER_FIELDS_NOT_BACKED_UP},
+                           indent=1, sort_keys=True).encode())]
+    for rel in raw_files(led):
+        with gzip.open(os.path.join(data_dir, rel)) as f:
+            entries.append((rel[:-len(".gz")], f.read()))
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w", format=tarfile.USTAR_FORMAT) as tar:
+        for name, data in sorted(entries):
+            info = tarfile.TarInfo(name)
+            info.size, info.mode = len(data), 0o644
+            tar.addfile(info, io.BytesIO(data))
+    return lzma.compress(buf.getvalue(), preset=9 | lzma.PRESET_EXTREME)
+
+
+def back_up(backup_dir, data_dir, led):
+    """Commit the period's archive to the backup clone if it's new, push, and return HEAD."""
+    def git(*args, check=True):
+        p = subprocess.run(["git", "-C", backup_dir] + list(args),
+                           capture_output=True, text=True, timeout=300)
+        if check and p.returncode:
+            raise RunStop("backup: git %s failed: %s" % (" ".join(args), (p.stderr or p.stdout).strip()))
+        return p.stdout.strip()
+
+    branch = git("symbolic-ref", "--short", "HEAD")
+    git("fetch", "-q", "origin")
+    if git("rev-parse", "-q", "--verify", "origin/" + branch, check=False):
+        git("merge", "-q", "--ff-only", "origin/" + branch)
+    name = "%s.tar.xz" % led["period_start"]
+    if not os.path.exists(os.path.join(backup_dir, name)):
+        atomic_write(os.path.join(backup_dir, name), backup_archive(data_dir, led))
+        git("add", "--", name)
+        git("commit", "-q", "-m", "Back up RentCast responses for period %s" % led["period_start"], "--", name)
+    git("push", "-q", "origin", "HEAD:refs/heads/" + branch)
+    git("fetch", "-q", "origin")
+    if git("cat-file", "-t", "origin/%s:%s" % (branch, name), check=False) != "blob":
+        raise RunStop("backup of period %s is not on the backup remote after pushing" % led["period_start"])
+    return git("rev-parse", "HEAD")
+
+
+def back_up_periods(data_dir):
+    """Back up every collected period that has no recorded backup."""
+    if not BACKUP_DIR:
+        return
+    closed = closed_periods()
+    for ledger in ledgers(data_dir):
+        led = ledger.s
+        if led.get("backed_up") or led["period_start"] not in closed or not led.get("scrape_ts"):
+            continue
+        if not all(os.path.exists(os.path.join(data_dir, f)) for f in raw_files(led)):
+            print("can't back up period %s: its raw responses were pruned" % led["period_start"])
+            continue
+        led["backed_up"] = back_up(BACKUP_DIR, data_dir, led)
+        ledger.save()
+        print("backed up period %s at %s" % (led["period_start"], led["backed_up"][:10]))
+
+
+RESTORABLE = re.compile(r"runs/\d{4}-\d{2}-\d{2}\.json|raw/\d{4}-\d{2}-\d{2}/[A-Za-z0-9_.-]+\.json")
+
+
+def restore(backup_dir, data_dir):
+    """Unpack every period archive into the data directory, leaving existing files alone."""
+    written = skipped = 0
+    for name in sorted(os.listdir(backup_dir)):
+        if not name.endswith(".tar.xz"):
+            continue
+        with tarfile.open(os.path.join(backup_dir, name), "r:xz") as tar:
+            for m in tar.getmembers():
+                if not m.isfile() or not RESTORABLE.fullmatch(m.name):
+                    raise RunStop("unexpected entry %r in %s" % (m.name, name))
+                raw = m.name.startswith("raw/")
+                dest = os.path.join(data_dir, m.name + (".gz" if raw else ""))
+                if os.path.exists(dest):
+                    skipped += 1
+                    continue
+                data = tar.extractfile(m).read()
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                atomic_write(dest, gzip.compress(data) if raw else data)
+                written += 1
+    print("restored %d files (%d already present); `publish` rebuilds the scrapes and site"
+          % (written, skipped))
 
 
 def build_fingerprint(repo):
@@ -379,6 +493,7 @@ class Collector:
             print("period %s already collected: %d calls spent" % (start, r["spent"]))
             if led["scrape_ts"] and not led.get("published"):
                 self.publish_site()
+            back_up_periods(self.data_dir)
             return
         for c in led["calls"]:
             if c["state"] == "sending":
@@ -414,6 +529,7 @@ class Collector:
                                  % (start, spent))
         print("spent %d calls for period %s" % (spent, start))
         self.publish_site()
+        back_up_periods(self.data_dir)
 
     def publish_site(self):
         self.ledger.s["published"] = build_and_publish(
@@ -561,7 +677,7 @@ class Collector:
 
 
 def main(argv):
-    if not argv or argv[0] not in ("run", "status", "publish"):
+    if not argv or argv[0] not in ("run", "status", "publish", "restore"):
         sys.exit(__doc__)
     data_dir = os.environ.get("NYC_RENTMAP_DATA_DIR")
     if not data_dir:
@@ -580,6 +696,7 @@ def main(argv):
             for name, st in s["passes"].items():
                 print("  %-15s %-10s total=%s pages=%s" % (name, st["status"], st.get("total"), st.get("pages")))
             print("  published: %s" % s.get("published", "not yet"))
+            print("  backed up: %s" % (s.get("backed_up") or ("not yet" if BACKUP_DIR else "backups off")))
         else:
             print("  no run yet this period")
         return
@@ -592,7 +709,11 @@ def main(argv):
         except BlockingIOError:
             sys.exit("another collection run is in progress")
         try:
-            if argv[0] == "publish":
+            if argv[0] == "restore":
+                if not BACKUP_DIR:
+                    raise RunStop("NYC_RENTMAP_BACKUP_DIR is not set")
+                restore(BACKUP_DIR, data_dir)
+            elif argv[0] == "publish":
                 git = Git(repo)
                 restart_if_updated(git.sync())
                 refilter_scrapes(data_dir, ScrapeFilter())

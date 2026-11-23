@@ -31,6 +31,8 @@ docstrings in `collect.py` and `rentcast_quota.py`.
 | `/srv/nyc-rentmap/secrets/known_hosts` | `rentmap`, 644 | GitHub's SSH host keys, copied from `nyc/deploy/known_hosts` |
 | `/srv/nyc-rentmap/secrets/rentcast.env` | `root`, 600 | `RENTCAST_API_KEY=...` |
 | `/srv/nyc-rentmap/secrets/telegram.env` | `root`, 600 | `TELEGRAM_BOT_TOKEN=...` and `TELEGRAM_CHAT_ID=...`, for failure alerts |
+| `/srv/nyc-rentmap/backup` | `rentmap` | clone of the private backup repository; the container pushes `<period>.tar.xz` archives here |
+| `/srv/nyc-rentmap/secrets/backup_key` | `rentmap`, 600 | SSH deploy key with write access to the backup repository only |
 | `/usr/local/sbin/nyc-rentmap` | `root` | wrapper that starts the container (installed copy of `nyc/deploy/nyc-rentmap`) |
 | `/usr/local/sbin/nyc-rentmap-alert` | `root` | sends a Telegram message when a run fails (installed copy of `nyc/deploy/nyc-rentmap-alert`) |
 | `/etc/systemd/system/nyc-rentmap.{service,timer}`, `nyc-rentmap-alert.service` | `root` | installed copies of `nyc/deploy/` |
@@ -215,6 +217,56 @@ at least that.
        chat with the bot. If it doesn't,
        `journalctl -u nyc-rentmap-alert.service -n 20` shows why.
 
+12. Turn on backups. After each collection, the run commits that period's
+    raw RentCast responses and run ledger to a private GitHub repository as
+    `<period>.tar.xz` (about 0.5 to 1 MB a month). Everything else can be
+    rebuilt from them; see "Restoring from the backup". On a Pi set up before
+    backups existed, run "Updating the Pi" first, so the installed wrapper
+    knows to mount the backup clone.
+
+    1. On GitHub, open the create menu in the upper-right corner of any page
+       and click **New repository**. Name it, make it private, leave the
+       README, `.gitignore`, and license options off, and click
+       **Create repository**.
+    2. Create a deploy key for it (GitHub doesn't let one deploy key serve
+       two repositories, so this is a second key) and print its public half:
+
+       ```bash
+       sudo -u rentmap ssh-keygen -t ed25519 -N "" -C nyc-rentmap-backup -f /srv/nyc-rentmap/secrets/backup_key
+       sudo cat /srv/nyc-rentmap/secrets/backup_key.pub
+       ```
+
+       In the new private repository: **Settings** → **Deploy Keys** →
+       **Add deploy key**. Put `nyc-rentmap Pi backups` in the "Title"
+       field, paste the public key in the "Key" field, select
+       **Allow write access**, and click **Add key**.
+    3. Clone it to `/srv/nyc-rentmap/backup` and configure the clone,
+       replacing `OWNER/REPOSITORY` with the new repository and `ADDRESS`
+       with the same commit email as in step 3. Cloning an empty repository
+       prints a warning; that's expected.
+
+       ```bash
+       sudo -u rentmap env GIT_SSH_COMMAND="ssh -i /srv/nyc-rentmap/secrets/backup_key -o UserKnownHostsFile=/srv/nyc-rentmap/secrets/known_hosts -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes" git clone git@github.com:OWNER/REPOSITORY.git /srv/nyc-rentmap/backup
+       sudo -u rentmap git -C /srv/nyc-rentmap/backup config core.sshCommand "ssh -i /srv/nyc-rentmap/secrets/backup_key -o UserKnownHostsFile=/srv/nyc-rentmap/secrets/known_hosts -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes"
+       sudo -u rentmap git -C /srv/nyc-rentmap/backup config user.name "nyc-rentmap (Pi)"
+       sudo -u rentmap git -C /srv/nyc-rentmap/backup config user.email "ADDRESS"
+       ```
+
+       The wrapper mounts the clone into the container whenever
+       `/srv/nyc-rentmap/backup` exists.
+    4. Back up the periods collected so far by running the daily check now.
+       Like its scheduled run, it spends RentCast calls only if the current
+       period still needs collecting.
+
+       ```bash
+       sudo systemctl start nyc-rentmap.service
+       sudo nyc-rentmap status
+       ```
+
+       `status` should show `backed up:` followed by a commit ID, and the
+       private repository should have a `<period>.tar.xz` file for each
+       collected period.
+
 ## Updating the Pi
 
 Follow this after pushing any change to `master` that the Pi should run. Run
@@ -383,6 +435,28 @@ To back out of a rebase at any point, run
 `sudo -u rentmap git -C /srv/nyc-rentmap/repo rebase --abort`, and resume the
 timer with `sudo systemctl start nyc-rentmap.timer`.
 
+## Restoring from the backup
+
+If the Pi's data is lost (for example, a failed SD card), rebuild it from
+the backup repository. Nothing here spends RentCast calls.
+
+1. On the replacement Pi (or SD card), do Setup steps 1 to 6 and step 12
+   parts 2 and 3. Both deploy keys are new, so on GitHub delete the old Pi's
+   keys from each repository's **Deploy Keys** settings.
+2. Restore the raw responses and run ledgers, then rebuild:
+
+   ```bash
+   sudo nyc-rentmap restore
+   sudo nyc-rentmap publish
+   ```
+
+   `restore` unpacks every archive into `/srv/nyc-rentmap/data` without
+   overwriting files already there, and prints how many it wrote.
+   `publish` rewrites each collected period's scrape from its raw responses
+   and rebuilds and republishes the whole site.
+3. Finish with Setup step 7 (check `status`), step 8 (enable the timer), and
+   step 11 parts 3 and 4 (Telegram settings and a test alert).
+
 ## Day to day
 
 - **Code updates:** each run pulls new commits and restarts onto them, so
@@ -415,6 +489,10 @@ timer with `sudo systemctl start nyc-rentmap.timer`.
   ```bash
   python3 -I nyc/rentcast_quota.py set-usage-before-run N --note "match dashboard"
   ```
+- **Backups:** after each collection, the run pushes `<period>.tar.xz` to the
+  backup repository and records the commit; `sudo nyc-rentmap status` shows
+  it under `backed up:`. A failed backup fails the run (so Telegram alerts
+  you) and the next daily check retries it.
 - **A Telegram alert** means a run failed; the message carries its last log
   lines, and `journalctl -u nyc-rentmap.service` has the rest. The next daily
   check retries, so one alert can resolve itself; repeated daily alerts mean

@@ -226,5 +226,31 @@ check "forced a full rebuild and republished, without spending calls" 'echo "$ou
 out=$(run normal 2026-11-24); echo "$out" | grep -E "RESULT|wrote|rebuilding|already"
 check "next day: nothing rewritten or rebuilt" '! echo "$out" | grep -q "wrote" && ! echo "$out" | grep -q "rebuilding" && echo "$out" | grep -q "already collected"'
 
+echo "=== 12. backups: one archive per period, retried after failure, full restore ==="
+setup
+git init -q --bare -b main "$W/backup.git"
+git clone -q "$W/backup.git" "$W/backup" 2>/dev/null
+git -C "$W/backup" config user.name pi; git -C "$W/backup" config user.email pi@test
+bk() { NYC_RENTMAP_BACKUP_DIR="$W/backup" "$PY" -I "$T/scenario.py" "$W/pi" "$W/data" "$1" "$2" 2>&1; }
+backups() { git -C "$W/backup.git" rev-list --count main 2>/dev/null || echo 0; }
+mv "$W/backup.git" "$W/backup.offline"
+out=$(bk normal 2026-11-22); echo "$out" | grep -E "RESULT|backed up"
+check "backup remote down: collection and publish still done, run stops on the backup" '[ "$(calls)" = 23 ] && [ "$(origin_q)" = "32 closed 23 23" ] && [ "$(pages_commits)" = 1 ] && echo "$out" | grep -q "RESULT stopped: backup: git fetch"'
+check "no backup recorded in the ledger" '! grep -q "\"backed_up\"" "$W"/data/runs/2026-11-21.json'
+mv "$W/backup.offline" "$W/backup.git"
+out=$(bk normal 2026-11-23); echo "$out" | grep -E "RESULT|backed up|already"
+check "next day: period backed up as one archive, recorded in the ledger" 'echo "$out" | grep -q "backed up period 2026-11-21" && [ "$(git -C "$W/backup.git" ls-tree --name-only main)" = "2026-11-21.tar.xz" ] && grep -q "\"backed_up\": \"[0-9a-f]\{40\}\"" "$W"/data/runs/2026-11-21.json'
+git -C "$W/backup.git" show main:2026-11-21.tar.xz > "$W/archive.tar.xz"
+check "archive holds the ledger and all 23 raw responses" '[ "$(tar -tJf "$W/archive.tar.xz" | grep -c "^raw/2026-11-21/.*\.json$")" = 23 ] && tar -tJf "$W/archive.tar.xz" | grep -qx "runs/2026-11-21.json"'
+check "archived ledger leaves out publish and backup fields" '! tar -xOJf "$W/archive.tar.xz" runs/2026-11-21.json | grep -q -E "\"(published|published_at|scrape_filter|backed_up)\""'
+out=$(bk normal 2026-11-24); echo "$out" | grep -E "RESULT|backed up"
+check "rerun makes no new backup commit" '[ "$(backups)" = 1 ] && ! echo "$out" | grep -q "backed up"'
+pages=$(git -C "$W/origin.git" rev-parse gh-pages)
+rm -rf "$W/data"; mkdir "$W/data"
+out=$(bk mainrestore 2026-11-25); echo "$out" | grep -E "RESULT|restored"
+check "restore unpacked the ledger and 23 raw responses" 'echo "$out" | grep -q "restored 24 files (0 already present)" && [ "$(ls "$W"/data/raw/2026-11-21/*.json.gz | wc -l | tr -d " ")" = 23 ]'
+out=$(bk mainpublish 2026-11-25); echo "$out" | grep -E "RESULT|wrote|gh-pages"
+check "publish after restore rebuilt the scrape and an identical site" 'echo "$out" | grep -q "(8056 listings;" && echo "$out" | grep -q "gh-pages unchanged" && [ "$(git -C "$W/origin.git" rev-parse gh-pages)" = "$pages" ]'
+
 echo; echo "$PASS passed, $FAIL failed"
 if [ "$FAIL" = 0 ]; then rm -rf "$W"; else echo "test repos kept in $W"; exit 1; fi

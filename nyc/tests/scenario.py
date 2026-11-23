@@ -49,10 +49,10 @@ if scenario.startswith("crash@"):
 if scenario == "http403":
     kw["fail_status"] = 403
 
-if scenario == "mainpublish":
+if scenario in ("mainpublish", "mainrestore"):
     os.environ["NYC_RENTMAP_DATA_DIR"] = data_dir
     try:
-        collect.main(["publish"])
+        collect.main([scenario[len("main"):]])
         print("RESULT ok")
     except SystemExit as e:
         print("RESULT stopped:", e)

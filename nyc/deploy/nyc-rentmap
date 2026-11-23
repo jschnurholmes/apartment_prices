@@ -2,12 +2,19 @@
 set -eu
 
 case "${1:-}" in
-  run|status|publish) ;;
-  *) echo "usage: nyc-rentmap run|status|publish" >&2; exit 2 ;;
+  run|status|publish|restore) ;;
+  *) echo "usage: nyc-rentmap run|status|publish|restore" >&2; exit 2 ;;
 esac
 
 ROOT=/srv/nyc-rentmap
-exec /usr/bin/docker run --rm --name "nyc-rentmap-$1" \
+CMD=$1
+set --
+if [ -d "$ROOT/backup" ]; then
+  set -- -e NYC_RENTMAP_BACKUP_DIR="$ROOT/backup" \
+    -v "$ROOT/backup:$ROOT/backup" \
+    -v "$ROOT/secrets/backup_key:$ROOT/secrets/backup_key:ro"
+fi
+exec /usr/bin/docker run --rm --name "nyc-rentmap-$CMD" \
   --read-only --tmpfs /tmp \
   --cap-drop ALL --security-opt no-new-privileges \
   --env-file "$ROOT/secrets/rentcast.env" \
@@ -16,4 +23,5 @@ exec /usr/bin/docker run --rm --name "nyc-rentmap-$1" \
   -v "$ROOT/data:$ROOT/data" \
   -v "$ROOT/secrets/deploy_key:$ROOT/secrets/deploy_key:ro" \
   -v "$ROOT/secrets/known_hosts:$ROOT/secrets/known_hosts:ro" \
-  nyc-rentmap:latest "$1"
+  "$@" \
+  nyc-rentmap:latest "$CMD"
