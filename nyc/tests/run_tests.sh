@@ -51,7 +51,8 @@ add_cname() {
 wd() { git -C "$W/laptop" pull -q --ff-only; git -C "$W/laptop" fetch -q origin; python3 -I "$W/laptop/nyc/watchdog.py" --today "$1" 2>&1; echo "exit=$?"; }
 manual() { (cd "$W/laptop" && git pull -q --ff-only && python3 -I nyc/rentcast_quota.py add-usage "$1" --date "$2" --note test >/dev/null && git commit -qam "manual usage" && git push -q); }
 
-echo "=== 1. normal run, then rerun ==="
+g_publish() {
+echo "=== publish: normal run, then rerun ==="
 setup
 out=$(run normal 2026-11-22); echo "$out" | grep -E 'RESULT|spent|wrote'
 check "23 calls made (14+1+7+1)" '[ "$(calls)" = 23 ]'
@@ -77,14 +78,14 @@ out=$(wd 2026-11-23); echo "$out"
 check "watchdog passes a collected and published period, past GitHub's CNAME commit" 'echo "$out" | grep -q "^OK: period 2026-11-21: collected (23 calls) and published" && echo "$out" | grep -q "exit=0"'
 check "CNAME added on GitHub is still published" '[ "$(pages_file CNAME)" = "maps.example.test" ]'
 
-echo "=== 1d. GitHub unreachable at publish: nothing pushed ==="
+echo "=== publish: GitHub unreachable at publish: nothing pushed ==="
 mv "$W/origin.git" "$W/origin.offline"
 out=$(run publish 2026-11-25); echo "$out" | grep RESULT
 mv "$W/origin.offline" "$W/origin.git"
 check "publish stops when gh-pages can't be read" 'echo "$out" | grep -q "RESULT stopped: git ls-remote failed"'
 check "gh-pages and its CNAME untouched" '[ "$(git -C "$W/origin.git" rev-parse gh-pages)" = "$before" ] && [ "$(pages_file CNAME)" = "maps.example.test" ]'
 
-echo "=== 1b. build failure: collection kept, publish retried next day ==="
+echo "=== publish: build failure: collection kept, publish retried next day ==="
 setup
 mv "$W/pi/cities/nyc_housing_mask.png" "$W/mask.bak"
 out=$(run normal 2026-11-22); echo "$out" | grep -E "RESULT|spent"
@@ -98,7 +99,10 @@ check "next day publishes without collecting again" '[ "$(calls)" = 23 ] && [ "$
 out=$(wd 2026-11-24); echo "$out"
 check "watchdog passes once the retry published" 'echo "$out" | grep -q "^OK: period 2026-11-21: collected" && echo "$out" | grep -q "exit=0"'
 
-echo "=== 2. reset day waits ==="
+}
+
+g_quota() {
+echo "=== quota: reset day waits ==="
 setup
 out=$(run normal 2026-11-21); echo "$out" | grep -E 'RESULT|waiting'
 check "no calls on reset day" '[ "$(calls)" = 0 ] && echo "$out" | grep -q waiting'
@@ -107,20 +111,7 @@ check "watchdog doesn't check before two days after the reset" 'echo "$out" | gr
 out=$(wd 2026-11-23); echo "$out"
 check "watchdog fails when no collection started" 'echo "$out" | grep -q "^FAIL: period 2026-11-21: no collection has started" && echo "$out" | grep -q "exit=1"'
 
-echo "=== 3. crash mid-pass, then resume ==="
-setup
-out=$(run crash@6 2026-11-22); echo "$out" | grep RESULT
-check "crash left call 6 marked sending" 'grep -q "\"sending\"" "$W"/data/runs/2026-11-21.json'
-check "origin reservation open, 14 reserved" '[ "$(origin_q)" = "23 open 14 0" ]'
-out=$(wd 2026-11-23); echo "$out"
-check "watchdog fails an unfinished collection" 'echo "$out" | grep -q "^FAIL: period 2026-11-21: collection started but not finished (0 of 14 calls spent)" && echo "$out" | grep -q "exit=1"'
-out=$(run normal 2026-11-22); echo "$out" | grep -E 'RESULT|active-4boro|spent'
-check "resume: lost page counted, not re-sent (no room), pass incomplete" 'echo "$out" | grep -q "active-4boro *incomplete"'
-check "total calls 23 including the lost one" '[ "$(calls)" = 23 ]'
-check "origin: closed with 23 spent, used 32" '[ "$(origin_q)" = "32 closed 23 23" ]'
-check "never reserved more than 23" '! git -C "$W/origin.git" log --format=%s | grep -E "Reserve (2[4-9]|[3-9][0-9])" | grep -q .'
-
-echo "=== 4. tight quota: priority decides ==="
+echo "=== quota: tight quota: priority decides ==="
 setup
 (cd "$W/laptop" && python3 -I nyc/rentcast_quota.py add-usage 24 --date 2026-11-22 --note test >/dev/null && git commit -qam "manual usage" && git push -q)
 out=$(run normal 2026-11-22); echo "$out" | grep -E 'RESULT|active|inactive|spent'
@@ -128,7 +119,7 @@ check "Active 4-boro and Active SI complete; Inactive 4-boro incomplete; Inactiv
   'echo "$out" | grep -q "active-4boro *complete" && echo "$out" | grep -q "active-si *complete" && echo "$out" | grep -q "inactive-4boro *incomplete" && echo "$out" | grep -q "inactive-si *skipped"'
 check "16 calls made, used 49 of 50 (1 kept free)" '[ "$(calls)" = 16 ] && [ "$(origin_q)" = "49 closed 16 16" ]'
 
-echo "=== 4b. Active 4-boro alone exceeds quota: it gets everything ==="
+echo "=== quota: Active 4-boro alone exceeds quota: it gets everything ==="
 setup
 manual 33 2026-11-22
 out=$(run normal 2026-11-22); echo "$out" | grep -E 'RESULT|active|inactive|spent'
@@ -136,7 +127,7 @@ check "Active 4-boro spends all 7 available calls, incomplete" 'echo "$out" | gr
 check "all other passes skipped" 'echo "$out" | grep -q "active-si *skipped" && echo "$out" | grep -q "inactive-4boro *skipped" && echo "$out" | grep -q "inactive-si *skipped"'
 check "used 49 of 50, closed with 7 spent" '[ "$(origin_q)" = "49 closed 7 7" ]'
 
-echo "=== 4c. Inactive 4-boro won't fit: skipped by estimate, SI passes still run ==="
+echo "=== quota: Inactive 4-boro won't fit: skipped by estimate, SI passes still run ==="
 setup
 out=$(run normal 2026-11-22); echo "$out" | grep RESULT
 add_cname
@@ -149,26 +140,45 @@ check "December quota: used 49, closed with 16 spent" '[ "$(origin_qd 2026-12-22
 check "December run published, site still a single commit" 'echo "$out" | grep -q "RESULT ok" && [ "$(pages_commits)" = 1 ] && grep -q "\"published\": \"[0-9a-f]\{40\}\"" "$W"/data/runs/2026-12-21.json'
 check "December publish carried the CNAME over" '[ "$(pages_file CNAME)" = "maps.example.test" ] && pages_file city.json | grep -q "\"name\": \"NYC\""'
 
-echo "=== 5. manual usage pushed from laptop is respected ==="
+echo "=== quota: manual usage pushed from laptop is respected ==="
 setup
 (cd "$W/laptop" && python3 -I nyc/rentcast_quota.py add-usage 40 --date 2026-11-22 --note test >/dev/null && git commit -qam "manual usage" && git push -q)
 out=$(run normal 2026-11-22); echo "$out" | grep -E 'RESULT|quota'
 check "no calls when only 0 remain after keep_free" '[ "$(calls)" = 0 ]'
 
-echo "=== 6. HTTP 403 stops the run, unbilled; retry resumes ==="
+}
+
+g_failures() {
+echo "=== failures: crash mid-pass, then resume ==="
+setup
+out=$(run crash@6 2026-11-22); echo "$out" | grep RESULT
+check "crash left call 6 marked sending" 'grep -q "\"sending\"" "$W"/data/runs/2026-11-21.json'
+check "origin reservation open, 14 reserved" '[ "$(origin_q)" = "23 open 14 0" ]'
+out=$(wd 2026-11-23); echo "$out"
+check "watchdog fails an unfinished collection" 'echo "$out" | grep -q "^FAIL: period 2026-11-21: collection started but not finished (0 of 14 calls spent)" && echo "$out" | grep -q "exit=1"'
+out=$(run normal 2026-11-22); echo "$out" | grep -E 'RESULT|active-4boro|spent'
+check "resume: lost page counted, not re-sent (no room), pass incomplete" 'echo "$out" | grep -q "active-4boro *incomplete"'
+check "total calls 23 including the lost one" '[ "$(calls)" = 23 ]'
+check "origin: closed with 23 spent, used 32" '[ "$(origin_q)" = "32 closed 23 23" ]'
+check "never reserved more than 23" '! git -C "$W/origin.git" log --format=%s | grep -E "Reserve (2[4-9]|[3-9][0-9])" | grep -q .'
+
+echo "=== failures: HTTP 403 stops the run, unbilled; retry resumes ==="
 setup
 out=$(run http403 2026-11-22); echo "$out" | grep RESULT
 check "stopped after 1 unbilled call, reservation left open" '[ "$(calls)" = 1 ] && [ "$(origin_q)" = "10 open 1 0" ]'
 out=$(run normal 2026-11-23); echo "$out" | grep -E 'RESULT|spent'
 check "retry completes: 23 billed, 24 calls sent" '[ "$(calls)" = 24 ] && [ "$(origin_q)" = "32 closed 23 23" ]'
 
-echo "=== 7. GitHub unreachable: nothing spent ==="
+echo "=== failures: GitHub unreachable: nothing spent ==="
 setup
 mv "$W/origin.git" "$W/origin.offline"
 out=$(run normal 2026-11-22); echo "$out" | grep RESULT
 check "no calls when origin is unreachable" '[ "$(calls)" = 0 ] && echo "$out" | grep -q "RESULT stopped"'
 
-echo "=== 8. code pushed during the period runs in the same run ==="
+}
+
+g_restart() {
+echo "=== restart: code pushed during the period runs in the same run ==="
 setup
 push_marker() {
   (cd "$W/laptop" && git pull -q --ff-only && python3 -I - "$1" "$2" "$3" <<'PY' && git commit -qam "marker $2" && git push -q)
@@ -189,25 +199,37 @@ check "manual publish restarted once and ran the new code" '[ "$(echo "$out" | g
 out=$(run normal 2026-11-26); echo "$out" | grep -E "RESULT|restarting|already"
 check "no restart when nothing new was pulled" '! echo "$out" | grep -q "restarting" && echo "$out" | grep -q "already collected"'
 
-echo "=== 9. Telegram alert script ==="
+}
+
+g_alert() {
+echo "=== alert: Telegram alert script ==="
 out=$("$PY" -I "$T/test_alert.py" 2>&1); echo "$out"
 PASS=$((PASS + $(echo "$out" | grep -c '^PASS')))
 FAIL=$((FAIL + $(echo "$out" | grep -c '^FAIL')))
 echo "$out" | grep -q '^alert tests done' || { echo "FAIL alert tests didn't finish"; FAIL=$((FAIL + 1)); }
 
-echo "=== 10. area filter on real boundaries ==="
+}
+
+g_areas() {
+echo "=== areas: area filter on real boundaries ==="
 out=$("$PY" -I "$T/test_areas.py" 2>&1); echo "$out"
 PASS=$((PASS + $(echo "$out" | grep -c '^PASS')))
 FAIL=$((FAIL + $(echo "$out" | grep -c '^FAIL')))
 echo "$out" | grep -q '^area tests done' || { echo "FAIL area tests didn't finish"; FAIL=$((FAIL + 1)); }
 
-echo "=== 10b. scrape writer: room rentals and same-month duplicates ==="
+}
+
+g_scrape() {
+echo "=== scrape: scrape writer: room rentals and same-month duplicates ==="
 out=$("$PY" -I "$T/test_scrape.py" 2>&1); echo "$out"
 PASS=$((PASS + $(echo "$out" | grep -c '^PASS')))
 FAIL=$((FAIL + $(echo "$out" | grep -c '^FAIL')))
 echo "$out" | grep -q '^scrape tests done' || { echo "FAIL scrape tests didn't finish"; FAIL=$((FAIL + 1)); }
 
-echo "=== 11. areas change mid-period: scrape rewritten from raw, site rebuilt ==="
+}
+
+g_refilter() {
+echo "=== refilter: areas change mid-period: scrape rewritten from raw, site rebuilt ==="
 setup
 out=$(run normal 2026-11-22); echo "$out" | grep -E "RESULT|rebuilding|wrote"
 check "first publish forces a full build" 'echo "$out" | grep -q "rebuilding every month"'
@@ -226,7 +248,10 @@ check "forced a full rebuild and republished, without spending calls" 'echo "$ou
 out=$(run normal 2026-11-24); echo "$out" | grep -E "RESULT|wrote|rebuilding|already"
 check "next day: nothing rewritten or rebuilt" '! echo "$out" | grep -q "wrote" && ! echo "$out" | grep -q "rebuilding" && echo "$out" | grep -q "already collected"'
 
-echo "=== 12. backups: one archive per period, retried after failure, full restore ==="
+}
+
+g_backup() {
+echo "=== backup: backups: one archive per period, retried after failure, full restore ==="
 setup
 git init -q --bare -b main "$W/backup.git"
 git clone -q "$W/backup.git" "$W/backup" 2>/dev/null
@@ -252,7 +277,12 @@ check "restore unpacked the ledger and 23 raw responses" 'echo "$out" | grep -q 
 out=$(bk mainpublish 2026-11-25); echo "$out" | grep -E "RESULT|wrote|gh-pages"
 check "publish after restore rebuilt the scrape and an identical site" 'echo "$out" | grep -q "(8056 listings;" && echo "$out" | grep -q "gh-pages unchanged" && [ "$(git -C "$W/origin.git" rev-parse gh-pages)" = "$pages" ]'
 
-echo "=== 13. GoatCounter tag added only when configured ==="
+}
+
+g_analytics() {
+echo "=== analytics: GoatCounter tag added only when configured ==="
+setup
+out=$(run normal 2026-11-22); echo "$out" | grep RESULT
 TAG='<script data-goatcounter="https://test.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>'
 before=$(git -C "$W/origin.git" rev-parse gh-pages)
 before_tree=$(git -C "$W/origin.git" rev-parse "gh-pages^{tree}")
@@ -266,6 +296,18 @@ check "a malformed URL stops the build before publishing" 'echo "$out" | grep -q
 out=$(run publish 2026-11-25); echo "$out" | grep -E "RESULT|gh-pages"
 check "unsetting it republishes the original files" '[ "$(git -C "$W/origin.git" rev-parse gh-pages)" != "$with" ] && [ "$(git -C "$W/origin.git" rev-parse "gh-pages^{tree}")" = "$before_tree" ] && ! pages_file index.html | grep -q goatcounter'
 check "wrapper script parses" 'sh -n "$REPO/nyc/deploy/nyc-rentmap"'
+
+}
+
+ALL_GROUPS="publish quota failures restart alert areas scrape refilter backup analytics"
+if [ $# = 0 ]; then set -- $ALL_GROUPS; fi
+for g in "$@"; do
+  case " $ALL_GROUPS " in
+    *" $g "*) ;;
+    *) echo "unknown test group: $g (groups: $ALL_GROUPS)" >&2; rm -rf "$W"; exit 2 ;;
+  esac
+done
+for g in "$@"; do "g_$g"; done
 
 echo; echo "$PASS passed, $FAIL failed"
 if [ "$FAIL" = 0 ]; then rm -rf "$W"; else echo "test repos kept in $W"; exit 1; fi

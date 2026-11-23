@@ -523,3 +523,26 @@ the backup repository. Nothing here spends RentCast calls.
   retries the build and push without spending any calls. To rebuild and
   republish by hand (for example after changing `cities/nyc.json` or the
   pages), run `sudo nyc-rentmap publish`.
+
+## Tests
+
+`nyc/tests/run_tests.sh` runs the whole suite against fake RentCast responses
+and local Git repositories; it makes no network calls to RentCast or GitHub.
+Give it group names to run only those groups:
+
+```bash
+nyc/tests/run_tests.sh analytics backup
+```
+
+| Group | Covers | Time |
+|---|---|---|
+| `publish` | a normal run and rerun, publishing, the `CNAME` carry-over, build and push failures | 45 s |
+| `quota` | reset-day wait, pass priority under a tight quota, manual usage | 65 s |
+| `failures` | crash and resume, HTTP 403, GitHub unreachable before collecting | 35 s |
+| `restart` | restarting onto code pulled during a run | 20 s |
+| `alert` | the Telegram alert script | 1 s |
+| `areas` | the municipal-area filter on real boundaries | 1 s |
+| `scrape` | room-rental and duplicate filtering | 1 s |
+| `refilter` | rewriting scrapes and rebuilding when the filter changes | 20 s |
+| `backup` | backup archives, retries and restore | 25 s |
+| `analytics` | the optional GoatCounter tag | 20 s |
