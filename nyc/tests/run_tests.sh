@@ -189,5 +189,11 @@ check "manual publish restarted once and ran the new code" '[ "$(echo "$out" | g
 out=$(run normal 2026-11-26); echo "$out" | grep -E "RESULT|restarting|already"
 check "no restart when nothing new was pulled" '! echo "$out" | grep -q "restarting" && echo "$out" | grep -q "already collected"'
 
+echo "=== 9. Telegram alert script ==="
+out=$("$PY" -I "$T/test_alert.py" 2>&1); echo "$out"
+PASS=$((PASS + $(echo "$out" | grep -c '^PASS')))
+FAIL=$((FAIL + $(echo "$out" | grep -c '^FAIL')))
+echo "$out" | grep -q '^alert tests done' || { echo "FAIL alert tests didn't finish"; FAIL=$((FAIL + 1)); }
+
 echo; echo "$PASS passed, $FAIL failed"
 if [ "$FAIL" = 0 ]; then rm -rf "$W"; else echo "test repos kept in $W"; exit 1; fi

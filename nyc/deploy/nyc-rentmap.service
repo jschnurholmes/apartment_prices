@@ -3,6 +3,7 @@ Description=NYC rent map RentCast collection (collects once per billing period)
 Requires=docker.service
 Wants=network-online.target
 After=network-online.target docker.service
+OnFailure=nyc-rentmap-alert.service
 
 [Service]
 Type=oneshot

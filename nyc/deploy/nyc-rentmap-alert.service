@@ -1,0 +1,10 @@
+[Unit]
+Description=Telegram alert for a failed NYC rent map run
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nyc-rentmap-alert
+EnvironmentFile=/srv/nyc-rentmap/secrets/telegram.env
+DynamicUser=yes
+SupplementaryGroups=systemd-journal
+TimeoutStartSec=2min

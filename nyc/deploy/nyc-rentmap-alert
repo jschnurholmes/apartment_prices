@@ -1,0 +1,68 @@
+#!/usr/bin/python3 -I
+"""Send a Telegram message when nyc-rentmap.service fails.
+
+Started by systemd through OnFailure= in nyc-rentmap.service, as
+nyc-rentmap-alert.service, which supplies TELEGRAM_BOT_TOKEN and
+TELEGRAM_CHAT_ID. Started while the collection service hasn't failed, it sends
+a test message instead.
+"""
+
+import json
+import os
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+from urllib.request import urlopen
+
+UNIT = "nyc-rentmap.service"
+LOG_LINES = 15
+MAX_LOG_CHARS = 3500
+
+
+def log_tail(invocation):
+    match = ["_SYSTEMD_INVOCATION_ID=" + invocation] if invocation else ["-u", UNIT]
+    p = subprocess.run(["journalctl", "--no-pager", "-o", "cat", "-n", str(LOG_LINES)] + match,
+                       capture_output=True, text=True, timeout=60)
+    tail = (p.stdout or p.stderr).strip() or "(no log lines found)"
+    return tail[-MAX_LOG_CHARS:]
+
+
+def compose(env):
+    failed = subprocess.run(["systemctl", "is-failed", "--quiet", UNIT]).returncode == 0
+    if failed:
+        head = "NYC rent map: the daily run failed"
+        if env.get("MONITOR_SERVICE_RESULT"):
+            head += " (%s, status %s)" % (env["MONITOR_SERVICE_RESULT"], env.get("MONITOR_EXIT_STATUS", "?"))
+    else:
+        head = "NYC rent map: alert test. The last run didn't fail."
+    return "%s\n\nLast log lines:\n%s" % (head, log_tail(env.get("MONITOR_INVOCATION_ID")))
+
+
+def send(token, chat_id, text):
+    data = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode()
+    try:
+        with urlopen("https://api.telegram.org/bot%s/sendMessage" % token, data, timeout=30) as r:
+            body = json.load(r)
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.load(e)
+        except ValueError:
+            body = {"ok": False, "description": "HTTP %d" % e.code}
+    except urllib.error.URLError as e:
+        sys.exit("couldn't reach Telegram: %s" % e.reason)
+    if not body.get("ok"):
+        sys.exit("Telegram refused the message: %s" % body.get("description"))
+
+
+def main():
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        sys.exit("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set")
+    send(token, chat_id, compose(os.environ))
+    print("alert sent")
+
+
+if __name__ == "__main__":
+    main()

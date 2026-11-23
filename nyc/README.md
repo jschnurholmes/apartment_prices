@@ -22,8 +22,10 @@ docstrings in `collect.py` and `rentcast_quota.py`.
 | `/srv/nyc-rentmap/secrets/deploy_key` | `rentmap`, 600 | SSH deploy key with write access to this repo only |
 | `/srv/nyc-rentmap/secrets/known_hosts` | `rentmap`, 644 | GitHub's SSH host keys, copied from `nyc/deploy/known_hosts` |
 | `/srv/nyc-rentmap/secrets/rentcast.env` | `root`, 600 | `RENTCAST_API_KEY=...` |
+| `/srv/nyc-rentmap/secrets/telegram.env` | `root`, 600 | `TELEGRAM_BOT_TOKEN=...` and `TELEGRAM_CHAT_ID=...`, for failure alerts |
 | `/usr/local/sbin/nyc-rentmap` | `root` | wrapper that starts the container (installed copy of `nyc/deploy/nyc-rentmap`) |
-| `/etc/systemd/system/nyc-rentmap.{service,timer}` | `root` | installed copies of `nyc/deploy/` |
+| `/usr/local/sbin/nyc-rentmap-alert` | `root` | sends a Telegram message when a run fails (installed copy of `nyc/deploy/nyc-rentmap-alert`) |
+| `/etc/systemd/system/nyc-rentmap.{service,timer}`, `nyc-rentmap-alert.service` | `root` | installed copies of `nyc/deploy/` |
 
 The container runs as `rentmap` with a read-only filesystem, no capabilities,
 and only the mounts above. The wrapper and units are copies, so code pulled
@@ -34,7 +36,9 @@ change to `nyc/deploy/`.
 
 Run these on the Pi. Docker must be installed (rootful), and
 `command -v docker` must print `/usr/bin/docker`; if it doesn't, change the
-path in `nyc/deploy/nyc-rentmap` before installing it. The site build peaks
+path in `nyc/deploy/nyc-rentmap` before installing it. Likewise,
+`command -v python3` must print `/usr/bin/python3`, the interpreter the
+failure alert script names on its first line. The site build peaks
 at about 1.5 GB of memory, so the `available` column of `free -h` should show
 at least that.
 
@@ -109,8 +113,8 @@ at least that.
 6. Install the wrapper and systemd units:
 
    ```bash
-   sudo install -m 755 /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap /usr/local/sbin/nyc-rentmap
-   sudo install -m 644 /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap.service /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap.timer /etc/systemd/system/
+   sudo install -m 755 /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap-alert /usr/local/sbin/
+   sudo install -m 644 /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap.service /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap.timer /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap-alert.service /etc/systemd/system/
    sudo systemctl daemon-reload
    ```
 
@@ -163,6 +167,46 @@ at least that.
        sends scheduled-workflow notices to whoever last changed the schedule
        in the workflow file.
 
+11. Turn on Telegram alerts. When a run fails, systemd starts
+    `nyc-rentmap-alert.service`, which messages you on Telegram within
+    minutes with the run's last log lines. It runs as a throwaway user that
+    can read only the journal and this step's settings file.
+
+    1. Create a bot: in Telegram, open a chat with `@BotFather` (check the
+       username is exactly that), send `/newbot`, and give it a name and a
+       username ending in `bot`. BotFather replies with the bot's token;
+       anyone with it can control the bot, and `/token` in BotFather makes a
+       new one.
+    2. Send your new bot any message, then get your chat ID from the reply
+       to `getUpdates`, run on any computer with `curl` and `python3`
+       (zsh's `read` prompt syntax; in bash use `read -rsp "Bot token: " TOKEN`):
+
+       ```bash
+       read -rs "TOKEN?Bot token: "
+       curl -s "https://api.telegram.org/bot$TOKEN/getUpdates" | python3 -I -c 'import json,sys; print({u["message"]["chat"]["id"] for u in json.load(sys.stdin)["result"] if "message" in u})'
+       ```
+
+       It prints your chat ID in braces. If the braces are empty, message the
+       bot again and rerun the `curl` line.
+    3. Store both on the Pi, readable only by root:
+
+       ```bash
+       sudo install -o root -g root -m 600 /dev/null /srv/nyc-rentmap/secrets/telegram.env
+       sudoedit /srv/nyc-rentmap/secrets/telegram.env
+       ```
+
+       The file holds two lines: `TELEGRAM_BOT_TOKEN=...` and
+       `TELEGRAM_CHAT_ID=...`.
+    4. Send a test alert:
+
+       ```bash
+       sudo systemctl start nyc-rentmap-alert.service
+       ```
+
+       A message starting "NYC rent map: alert test." should arrive in your
+       chat with the bot. If it doesn't,
+       `journalctl -u nyc-rentmap-alert.service -n 20` shows why.
+
 ## Updating the Pi
 
 Follow this after pushing any change to `master` that the Pi should run. Run
@@ -201,10 +245,14 @@ of date. Each step is safe to repeat.
    sudo diff -u /usr/local/sbin/nyc-rentmap /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap
    sudo diff -u /etc/systemd/system/nyc-rentmap.service /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap.service
    sudo diff -u /etc/systemd/system/nyc-rentmap.timer /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap.timer
+   sudo diff -u /usr/local/sbin/nyc-rentmap-alert /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap-alert
+   sudo diff -u /etc/systemd/system/nyc-rentmap-alert.service /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap-alert.service
    ```
 
    No output means that file is unchanged. Lines starting with `+` are what
-   step 5 installs; read them before continuing.
+   step 5 installs; read them before continuing. `No such file or directory`
+   for an installed path means the file is new; read the repo copy with
+   `sudo cat` followed by its path.
 
 4. Rebuild the image:
 
@@ -218,8 +266,8 @@ of date. Each step is safe to repeat.
 5. Install the wrapper and systemd units:
 
    ```bash
-   sudo install -m 755 /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap /usr/local/sbin/nyc-rentmap
-   sudo install -m 644 /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap.service /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap.timer /etc/systemd/system/
+   sudo install -m 755 /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap-alert /usr/local/sbin/
+   sudo install -m 644 /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap.service /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap.timer /srv/nyc-rentmap/repo/nyc/deploy/nyc-rentmap-alert.service /etc/systemd/system/
    sudo systemctl daemon-reload
    ```
 
@@ -359,6 +407,10 @@ timer with `sudo systemctl start nyc-rentmap.timer`.
   ```bash
   python3 -I nyc/rentcast_quota.py set-usage-before-run N --note "match dashboard"
   ```
+- **A Telegram alert** means a run failed; the message carries its last log
+  lines, and `journalctl -u nyc-rentmap.service` has the rest. The next daily
+  check retries, so one alert can resolve itself; repeated daily alerts mean
+  it won't.
 - **A watchdog email** means this period's collection or publish didn't
   happen. The failed run's log on GitHub says which: no collection has
   started, collection started but not finished, or collected but not
