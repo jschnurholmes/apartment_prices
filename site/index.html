@@ -106,6 +106,7 @@
     <label><input type="checkbox" id="fade" checked> Fade where data is thin</label>
     <label><input type="checkbox" id="mask" checked> Hide where nobody lives</label>
     <label><input type="checkbox" id="dots"> Show this month's new listings</label>
+    <label id="se-wrap" style="display:none"><input type="checkbox" id="se"> Show StreetEasy neighborhood rents</label>
   </div>
 
   <div id="summary"></div>
@@ -124,6 +125,13 @@
     colored whole, drawn from Census approximations of postal boundaries.
     "Relative to the city" compares with the typical home across these ZIP
     codes.</span>
+    <span id="about-se" style="display:none"><br><br>StreetEasy's dots are its median asking rents.  They
+    follow the month, size and view chosen above, using its latest month where
+    the map's is newer.  StreetEasy doesn't publish its neighborhood
+    boundaries, so each dot only marks roughly where the neighborhood is.  Its
+    largest size is 3BR+.  A faded dot had fewer than <span id="se-min"></span> listings of that size,
+    and shows a 3-month average weighted by listings.  "Relative to the city"
+    compares with StreetEasy's citywide median.</span>
   </div>
 </div>
 
@@ -153,9 +161,9 @@ const NEFF_LO = 3, NEFF_HI = 12;
 const SIGMA_FULL = 700, SIGMA_ZERO = 1500;   // meters
 
 const state = { dates: [], idx: 0, size: 2, mode: "nominal", cmpIdx: 0, cmpReal: true,
-                opacity: 0.75, fade: true, mask: true, dots: false, src: "map" };
+                opacity: 0.75, fade: true, mask: true, dots: false, src: "map", se: false };
 let MARKET = [];        // which of Zillow's and StreetEasy's data this site has
-let zillow = null;
+let zillow = null, streeteasy = null;
 const timelines = {};   // src -> {dates, idx, cmpIdx} while the other one is showing
 const cache = {};       // date -> {meta, logv: Float32Array, neff: Uint8Array, dots}
 let trends = null, maskData = null, basemap = null;
@@ -307,6 +315,7 @@ async function render() {
   drawLegend(sizeMult(cur.meta));
   drawSummary(cur);
   status("");
+  await renderDots();
 }
 
 // ---- Zillow rents by ZIP
@@ -354,6 +363,7 @@ async function renderZillow() {
   if (state.mode !== "nominal" && zillow.cpi_latest_month)
     el.append(document.createElement("br"), "Today's dollars = CPI-U as of " + zillow.cpi_latest_month + ".");
   status("");
+  await renderDots();
 }
 
 function zipAt(lat, lng) {
@@ -391,6 +401,102 @@ function zipPopup(lat, lng) {
 }
 
 function sizeMult(meta) { return meta.bedroom_mult[String(state.size)]; }
+
+// ---- StreetEasy neighborhood rents
+const SE_SIZES = ["Studio", "1BR", "2BR", "3BR+"];
+
+// Index of StreetEasy's latest month at or before a map date (YYYY-MM-DD or YYYY-MM), or -1.
+function seIndex(date) {
+  const m = date.slice(0, 7);
+  for (let i = streeteasy.months.length - 1; i >= 0; i--) if (streeteasy.months[i] <= m) return i;
+  return -1;
+}
+
+function seReal(i) { return streeteasy.cpi[i] && streeteasy.cpi_latest ? streeteasy.cpi_latest / streeteasy.cpi[i] : 1; }
+
+// {value, thin} for coloring an area's dot in the current view, or null.
+function seValue(a) {
+  const b = String(Math.min(state.size, 3)), i = seIndex(state.dates[state.idx]);
+  const v = i < 0 ? null : a.rent[b][i];
+  if (v == null) return null;
+  const rent = Math.abs(v);
+  let thin = v < 0;
+  if (state.mode === "nominal") return { value: rent, thin };
+  if (state.mode === "real") return { value: rent * seReal(i), thin };
+  if (state.mode === "relative") {
+    const city = streeteasy.city.rent[b][i];
+    return city == null ? null : { value: rent / Math.abs(city), thin };
+  }
+  const j = seIndex(state.dates[state.cmpIdx]), o = j < 0 ? null : a.rent[b][j];
+  if (o == null) return null;
+  thin = thin || o < 0;
+  return { value: rent / Math.abs(o) * (state.cmpReal ? seReal(i) / seReal(j) : 1) - 1, thin };
+}
+
+function seText(x) {
+  return state.mode === "relative" ? x.value.toFixed(2) + "× StreetEasy's citywide median"
+    : state.mode === "change" ? pct(x.value) + (state.cmpReal ? " after inflation" : "") : money(x.value);
+}
+
+function sePopup(a) {
+  const wrap = document.createElement("div"), b = Math.min(state.size, 3), i = seIndex(state.dates[state.idx]);
+  wrap.className = "popup";
+  const head = document.createElement("b"); head.textContent = a.name;
+  const sub = document.createElement("div"); sub.className = "muted";
+  const real = state.mode === "real" ? seReal(i) : 1;
+  sub.textContent = "StreetEasy, " + streeteasy.months[i] + (state.mode === "real" ? ", today's dollars" : "");
+  wrap.append(head, sub);
+  if (state.mode === "relative" || state.mode === "change") {
+    const d = document.createElement("div");
+    d.textContent = SE_SIZES[b] + ": " + seText(seValue(a)) +
+      (state.mode === "change" ? " since " + streeteasy.months[seIndex(state.dates[state.cmpIdx])] : "");
+    wrap.append(d);
+  }
+  const t = document.createElement("table");
+  SE_SIZES.forEach((name, k) => {
+    const v = a.rent[k][i], n = a.n[k][i], tr = document.createElement("tr");
+    [name, v == null ? "–" : money(Math.abs(v) * real) + (v < 0 ? "*" : ""), n + (n === 1 ? " listing" : " listings")].forEach((x, c) => {
+      const td = document.createElement("td"); td.textContent = x;
+      if (k === b && c < 2) td.className = "sel";
+      tr.append(td);
+    });
+    t.append(tr);
+  });
+  wrap.append(t);
+  if (SE_SIZES.some((_, k) => a.rent[k][i] < 0)) {
+    const d = document.createElement("div"); d.className = "muted";
+    d.textContent = "* Fewer than " + streeteasy.min_listings + " listings: a 3-month average.";
+    wrap.append(d);
+  }
+  return wrap;
+}
+
+async function renderDots() {
+  if (!state.se) { basemap.setDots(null); return; }
+  if (!streeteasy) {
+    status("Loading StreetEasy rents…");
+    const d = await getJSON("streeteasy.json");
+    d.city = d.areas.find(a => a.kind === "city");
+    streeteasy = d;
+    document.getElementById("se-min").textContent = d.min_listings;
+    status("");
+    if (!state.se) return;
+  }
+  const date = state.dates[state.idx], meta = state.src === "map" && cache[date] ? cache[date].meta : null;
+  const scale = meta && (state.mode === "nominal" || state.mode === "real") ? sizeMult(meta) : 1;
+  const list = [];
+  for (const a of streeteasy.areas) {
+    const x = a.pos && seValue(a);
+    if (!x) continue;
+    list.push({ lat: a.pos[0], lng: a.pos[1], color: "rgb(" + colorFor(x.value / scale).join(",") + ")", thin: x.thin,
+                title: a.name + ", " + SE_SIZES[Math.min(state.size, 3)] + ": " + seText(x), popup: () => sePopup(a) });
+  }
+  basemap.setDots(list);
+  const i = seIndex(date);
+  document.getElementById("summary").append(document.createElement("br"), "Dots: StreetEasy's " + SE_SIZES[Math.min(state.size, 3)] +
+    (i < 0 ? " medians start in " + streeteasy.months[0] + "." : " medians for " + streeteasy.months[i] + ", faded under " +
+     streeteasy.min_listings + " listings."));
+}
 
 function drawLegend(m) {
   const el = document.getElementById("legend");
@@ -500,8 +606,22 @@ function googleBasemap() {
     info = new google.maps.InfoWindow({ content: node, position: e.latLng });
     info.open(map);
   });
-  let polys = null;
+  let polys = null, markers = [];
   return {
+    setDots(list) {
+      markers.forEach(k => k.setMap(null));
+      markers = (list || []).map(d => {
+        const k = new google.maps.Marker({ map, position: { lat: d.lat, lng: d.lng }, title: d.title, zIndex: 10, optimized: true,
+          icon: { path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: d.color, fillOpacity: d.thin ? 0.4 : 1,
+                  strokeColor: "#ffffff", strokeOpacity: d.thin ? 0.6 : 1, strokeWeight: 1.5 } });
+        k.addListener("click", () => {
+          if (info) info.close();
+          info = new google.maps.InfoWindow({ content: d.popup() });
+          info.open(map, k);
+        });
+        return k;
+      });
+    },
     setZips(zips, colors, opacity) {
       if (!zips) { if (polys) polys.forEach(p => p.setMap(null)); polys = null; return; }
       if (!polys) polys = zips.map(a => new google.maps.Polygon({ clickable: false, strokeColor: "#ffffff", strokeWeight: 0.7, map,
@@ -529,8 +649,15 @@ function leafletBasemap() {
     const node = popupFor(e.latlng.lat, e.latlng.lng);
     if (node) L.popup().setLatLng(e.latlng).setContent(node).openOn(map);
   });
-  let polys = null;
+  let polys = null, markers = [];
+  map.createPane("rents").style.zIndex = 450;
   return {
+    setDots(list) {
+      markers.forEach(k => k.remove());
+      markers = (list || []).map(d => L.circleMarker([d.lat, d.lng], { pane: "rents", radius: 7, bubblingMouseEvents: false,
+        fillColor: d.color, fillOpacity: d.thin ? 0.4 : 1, color: "#ffffff", opacity: d.thin ? 0.6 : 1, weight: 1.5 })
+        .bindTooltip(d.title).on("click", () => L.popup().setLatLng([d.lat, d.lng]).setContent(d.popup()).openOn(map)).addTo(map));
+    },
     setZips(zips, colors, opacity) {
       if (!zips) { if (polys) polys.forEach(p => p.remove()); polys = null; return; }
       if (!polys) polys = zips.map(a => L.polygon(a.rings.map(r => r.map(([lng, lat]) => [lat, lng])),
@@ -587,6 +714,7 @@ function readHash() {
 function writeHash() {
   const h = new URLSearchParams({ date: state.dates[state.idx], size: state.size, mode: state.mode });
   if (state.src !== "map") h.set("src", state.src);
+  if (state.se) h.set("se", "1");
   if (state.mode === "change") h.set("cmp", state.dates[state.cmpIdx]);
   history.replaceState(null, "", "#" + h.toString());
 }
@@ -596,7 +724,8 @@ function syncControls() {
   document.getElementById("size").value = state.size;
   document.getElementById("mode").value = state.mode;
   document.getElementById("src").value = state.src;
-  document.getElementById("size").disabled = state.src === "zillow";
+  document.getElementById("size").disabled = state.src === "zillow" && !state.se;
+  document.getElementById("se").checked = state.se;
   for (const k of ["fade", "mask", "dots"]) document.getElementById(k).disabled = state.src === "zillow";
   document.getElementById("cmp-wrap").style.display = state.mode === "change" ? "" : "none";
   document.getElementById("earlier").disabled = state.idx <= 0;
@@ -649,6 +778,12 @@ async function main() {
       await switchSource("zillow");
       readHash();
     }
+  }
+  if (MARKET.includes("streeteasy")) {
+    document.getElementById("se-wrap").style.display = "";
+    document.getElementById("about-se").style.display = "";
+    state.se = new URLSearchParams(location.hash.slice(1)).get("se") === "1";
+    document.getElementById("se").onchange = e => { state.se = e.target.checked; update(); };
   }
   fillDates();
   document.getElementById("src").onchange = e => switchSource(e.target.value).then(update).catch(x => status("Error: " + x.message));
