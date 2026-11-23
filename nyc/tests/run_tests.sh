@@ -1,0 +1,178 @@
+#!/bin/bash
+set -u
+T=$(cd "$(dirname "$0")" && pwd)
+REPO=$(cd "$T/../.." && pwd)
+if [ -n "${PYTHON:-}" ]; then PY=$PYTHON
+elif [ -x "$REPO/nyc/.venv/bin/python" ]; then PY=$REPO/nyc/.venv/bin/python
+else PY=python3; fi
+W=$(mktemp -d)
+PASS=0; FAIL=0
+check() { if eval "$2"; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1"; FAIL=$((FAIL+1)); fi; }
+
+setup() {
+  rm -rf "$W"; mkdir -p "$W/seed" "$W/data"
+  git init -q --bare -b master "$W/origin.git"
+  (cd "$REPO" && git ls-files -z --cached --others --exclude-standard | xargs -0 tar cf -) | tar xf - -C "$W/seed"
+  python3 -I -c "import json,sys; p=sys.argv[1]; d=json.load(open(p)); d['reservations']=[]; json.dump(d, open(p,'w'), indent=2)" "$W/seed/nyc/rentcast_quota.json"
+  git -C "$W/seed" init -q -b master
+  git -C "$W/seed" -c user.name=t -c user.email=t@t add -A
+  git -C "$W/seed" -c user.name=t -c user.email=t@t commit -q -m seed
+  git -C "$W/seed" remote add origin "$W/origin.git"
+  git -C "$W/seed" push -q origin master
+  for c in pi laptop; do
+    git clone -q "$W/origin.git" "$W/$c"
+    git -C "$W/$c" config user.name "$c"; git -C "$W/$c" config user.email "$c@test"
+  done
+}
+run() { "$PY" -I "$T/scenario.py" "$W/pi" "$W/data" "$1" "$2" 2>&1; }
+pages_commits() { git -C "$W/origin.git" rev-list --count gh-pages 2>/dev/null || echo 0; }
+pages_file() { git -C "$W/origin.git" show "gh-pages:$1" 2>/dev/null; }
+calls() { [ -f "$W/data/fake_calls.log" ] && wc -l < "$W/data/fake_calls.log" | tr -d ' ' || echo 0; }
+q() { python3 -I -c "
+import json,sys; sys.path.insert(0,'$W/$1/nyc'); import rentcast_quota as r, datetime
+x=r.Quota('$W/$1/nyc/rentcast_quota.json'); d=datetime.date(2026,11,22)
+res=x.reservation('run-2026-11-21') or {}
+print(x.used(d), res.get('status'), res.get('reserved'), res.get('spent'))"; }
+origin_q() { git -C "$W/laptop" pull -q --ff-only; q laptop; }
+origin_qd() { git -C "$W/laptop" pull -q --ff-only; python3 -I -c "
+import sys; sys.path.insert(0,'$W/laptop/nyc'); import rentcast_quota as r, datetime
+x=r.Quota('$W/laptop/nyc/rentcast_quota.json'); d=datetime.date.fromisoformat('$1')
+res=x.reservation('$2') or {}
+print(x.used(d), res.get('status'), res.get('reserved'), res.get('spent'))"; }
+add_cname() {
+  local blob tree c
+  blob=$(printf 'maps.example.test' | git -C "$W/origin.git" hash-object -w --stdin)
+  GIT_INDEX_FILE="$W/cname.idx" git -C "$W/origin.git" read-tree gh-pages
+  GIT_INDEX_FILE="$W/cname.idx" git -C "$W/origin.git" update-index --add --cacheinfo "100644,$blob,CNAME"
+  tree=$(GIT_INDEX_FILE="$W/cname.idx" git -C "$W/origin.git" write-tree); rm -f "$W/cname.idx"
+  c=$(git -C "$W/origin.git" -c user.name=gh -c user.email=gh@test commit-tree "$tree" -p gh-pages -m "Create CNAME")
+  git -C "$W/origin.git" update-ref refs/heads/gh-pages "$c"
+}
+manual() { (cd "$W/laptop" && git pull -q --ff-only && python3 -I nyc/rentcast_quota.py add-usage "$1" --date "$2" --note test >/dev/null && git commit -qam "manual usage" && git push -q); }
+
+echo "=== 1. normal run, then rerun ==="
+setup
+out=$(run normal 2026-11-22); echo "$out" | grep -E 'RESULT|spent|wrote'
+check "23 calls made (14+1+7+1)" '[ "$(calls)" = 23 ]'
+check "origin quota: used 32, reservation closed, spent 23" '[ "$(origin_q)" = "32 closed 23 23" ]'
+check "origin has reserve and close commits" 'git -C "$W/origin.git" log --oneline | grep -q "Close RentCast reservation"'
+n=$(ls "$W"/data/v3/apts-*.txt | wc -l | tr -d " "); lines=$(grep -c "^[0-9]" "$W"/data/v3/apts-*.txt)
+check "one v3 scrape file, NYC-only listings (8,056 of 10,072 synthetic)" '[ "$n" = 1 ] && [ "$lines" = 8056 ]'
+check "v3 ids contain no whitespace" '! grep "^[0-9]" "$W"/data/v3/apts-*.txt | awk "NF!=5" | grep -q .'
+check "raw responses gzipped on disk (23 files)" '[ "$(ls "$W"/data/raw/2026-11-21/*.json.gz | wc -l | tr -d " ")" = 23 ]'
+check "gh-pages published as one parentless commit" '[ "$(pages_commits)" = 1 ]'
+check "gh-pages has NYC city.json, a month map, pages, .nojekyll" 'pages_file city.json | grep -q "\"name\": \"NYC\"" && git -C "$W/origin.git" ls-tree --name-only gh-pages | grep -q "^rentmap\..*\.png$" && pages_file index.html >/dev/null && pages_file trends.html >/dev/null && git -C "$W/origin.git" ls-tree --name-only gh-pages | grep -qx ".nojekyll"'
+check "ledger records the publish" 'grep -q "\"published\": \"[0-9a-f]\{40\}\"" "$W"/data/runs/2026-11-21.json'
+add_cname
+before=$(git -C "$W/origin.git" rev-parse gh-pages)
+out=$(run normal 2026-11-25); echo "$out" | grep RESULT
+check "rerun same period makes no calls" '[ "$(calls)" = 23 ] && echo "$out" | grep -q "already collected"'
+check "rerun does not republish" '[ "$(git -C "$W/origin.git" rev-parse gh-pages)" = "$before" ]'
+out=$(run publish 2026-11-25); echo "$out" | grep -E "RESULT|gh-pages"
+check "manual publish with nothing changed is skipped" 'echo "$out" | grep -q "gh-pages unchanged" && [ "$(git -C "$W/origin.git" rev-parse gh-pages)" = "$before" ]'
+check "CNAME added on GitHub is still published" '[ "$(pages_file CNAME)" = "maps.example.test" ]'
+
+echo "=== 1d. GitHub unreachable at publish: nothing pushed ==="
+mv "$W/origin.git" "$W/origin.offline"
+out=$(run publish 2026-11-25); echo "$out" | grep RESULT
+mv "$W/origin.offline" "$W/origin.git"
+check "publish stops when gh-pages can't be read" 'echo "$out" | grep -q "RESULT stopped: git ls-remote failed"'
+check "gh-pages and its CNAME untouched" '[ "$(git -C "$W/origin.git" rev-parse gh-pages)" = "$before" ] && [ "$(pages_file CNAME)" = "maps.example.test" ]'
+
+echo "=== 1b. build failure: collection kept, publish retried next day ==="
+setup
+mv "$W/pi/cities/nyc_housing_mask.png" "$W/mask.bak"
+out=$(run normal 2026-11-22); echo "$out" | grep -E "RESULT|spent"
+check "collection closed despite build failure" '[ "$(calls)" = 23 ] && [ "$(origin_q)" = "32 closed 23 23" ] && echo "$out" | grep -q "RESULT stopped: site build failed"'
+check "nothing published, ledger not marked" '[ "$(pages_commits)" = 0 ] && ! grep -q "\"published\"" "$W"/data/runs/2026-11-21.json'
+mv "$W/mask.bak" "$W/pi/cities/nyc_housing_mask.png"
+out=$(run normal 2026-11-23); echo "$out" | grep -E "RESULT|already|gh-pages"
+check "next day publishes without collecting again" '[ "$(calls)" = 23 ] && [ "$(pages_commits)" = 1 ] && echo "$out" | grep -q "already collected"'
+
+echo "=== 2. reset day waits ==="
+setup
+out=$(run normal 2026-11-21); echo "$out" | grep -E 'RESULT|waiting'
+check "no calls on reset day" '[ "$(calls)" = 0 ] && echo "$out" | grep -q waiting'
+
+echo "=== 3. crash mid-pass, then resume ==="
+setup
+out=$(run crash@6 2026-11-22); echo "$out" | grep RESULT
+check "crash left call 6 marked sending" 'grep -q "\"sending\"" "$W"/data/runs/2026-11-21.json'
+check "origin reservation open, 14 reserved" '[ "$(origin_q)" = "23 open 14 0" ]'
+out=$(run normal 2026-11-22); echo "$out" | grep -E 'RESULT|active-4boro|spent'
+check "resume: lost page counted, not re-sent (no room), pass incomplete" 'echo "$out" | grep -q "active-4boro *incomplete"'
+check "total calls 23 including the lost one" '[ "$(calls)" = 23 ]'
+check "origin: closed with 23 spent, used 32" '[ "$(origin_q)" = "32 closed 23 23" ]'
+check "never reserved more than 23" '! git -C "$W/origin.git" log --format=%s | grep -E "Reserve (2[4-9]|[3-9][0-9])" | grep -q .'
+
+echo "=== 4. tight quota: priority decides ==="
+setup
+(cd "$W/laptop" && python3 -I nyc/rentcast_quota.py add-usage 24 --date 2026-11-22 --note test >/dev/null && git commit -qam "manual usage" && git push -q)
+out=$(run normal 2026-11-22); echo "$out" | grep -E 'RESULT|active|inactive|spent'
+check "Active 4-boro and Active SI complete; Inactive 4-boro incomplete; Inactive SI skipped" \
+  'echo "$out" | grep -q "active-4boro *complete" && echo "$out" | grep -q "active-si *complete" && echo "$out" | grep -q "inactive-4boro *incomplete" && echo "$out" | grep -q "inactive-si *skipped"'
+check "16 calls made, used 49 of 50 (1 kept free)" '[ "$(calls)" = 16 ] && [ "$(origin_q)" = "49 closed 16 16" ]'
+
+echo "=== 4b. Active 4-boro alone exceeds quota: it gets everything ==="
+setup
+manual 33 2026-11-22
+out=$(run normal 2026-11-22); echo "$out" | grep -E 'RESULT|active|inactive|spent'
+check "Active 4-boro spends all 7 available calls, incomplete" 'echo "$out" | grep -q "active-4boro *incomplete total=6557 pages=14" && [ "$(calls)" = 7 ]'
+check "all other passes skipped" 'echo "$out" | grep -q "active-si *skipped" && echo "$out" | grep -q "inactive-4boro *skipped" && echo "$out" | grep -q "inactive-si *skipped"'
+check "used 49 of 50, closed with 7 spent" '[ "$(origin_q)" = "49 closed 7 7" ]'
+
+echo "=== 4c. Inactive 4-boro won't fit: skipped by estimate, SI passes still run ==="
+setup
+out=$(run normal 2026-11-22); echo "$out" | grep RESULT
+add_cname
+manual 33 2026-12-22
+out=$(run normal 2026-12-22); echo "$out" | grep -E 'RESULT|active|inactive|spent|need'
+check "Inactive 4-boro skipped from last period's estimate, no probe call" 'echo "$out" | grep -q "inactive-4boro *skipped *total=None" && echo "$out" | grep -q "inactive-4boro: last period.s 3029 listings need 7 pages; 1 calls available"'
+check "Active passes and Inactive SI complete" 'echo "$out" | grep -q "active-4boro *complete" && echo "$out" | grep -q "active-si *complete" && echo "$out" | grep -q "inactive-si *complete"'
+check "December run made 16 calls (14 + 1 + 0 + 1)" '[ "$(calls)" = 39 ]'
+check "December quota: used 49, closed with 16 spent" '[ "$(origin_qd 2026-12-22 run-2026-12-21)" = "49 closed 16 16" ]'
+check "December run published, site still a single commit" 'echo "$out" | grep -q "RESULT ok" && [ "$(pages_commits)" = 1 ] && grep -q "\"published\": \"[0-9a-f]\{40\}\"" "$W"/data/runs/2026-12-21.json'
+check "December publish carried the CNAME over" '[ "$(pages_file CNAME)" = "maps.example.test" ] && pages_file city.json | grep -q "\"name\": \"NYC\""'
+
+echo "=== 5. manual usage pushed from laptop is respected ==="
+setup
+(cd "$W/laptop" && python3 -I nyc/rentcast_quota.py add-usage 40 --date 2026-11-22 --note test >/dev/null && git commit -qam "manual usage" && git push -q)
+out=$(run normal 2026-11-22); echo "$out" | grep -E 'RESULT|quota'
+check "no calls when only 0 remain after keep_free" '[ "$(calls)" = 0 ]'
+
+echo "=== 6. HTTP 403 stops the run, unbilled; retry resumes ==="
+setup
+out=$(run http403 2026-11-22); echo "$out" | grep RESULT
+check "stopped after 1 unbilled call, reservation left open" '[ "$(calls)" = 1 ] && [ "$(origin_q)" = "10 open 1 0" ]'
+out=$(run normal 2026-11-23); echo "$out" | grep -E 'RESULT|spent'
+check "retry completes: 23 billed, 24 calls sent" '[ "$(calls)" = 24 ] && [ "$(origin_q)" = "32 closed 23 23" ]'
+
+echo "=== 7. GitHub unreachable: nothing spent ==="
+setup
+mv "$W/origin.git" "$W/origin.offline"
+out=$(run normal 2026-11-22); echo "$out" | grep RESULT
+check "no calls when origin is unreachable" '[ "$(calls)" = 0 ] && echo "$out" | grep -q "RESULT stopped"'
+
+echo "=== 8. code pushed during the period runs in the same run ==="
+setup
+push_marker() {
+  (cd "$W/laptop" && git pull -q --ff-only && python3 -I - "$1" "$2" "$3" <<'PY' && git commit -qam "marker $2" && git push -q)
+import sys
+anchor, text, indent = sys.argv[1], sys.argv[2], int(sys.argv[3])
+p = "nyc/collect.py"; s = open(p).read()
+assert anchor in s
+open(p, "w").write(s.replace(anchor, anchor + "\n" + " " * indent + "print(%r)" % text, 1))
+PY
+}
+push_marker "    def run(self):" "NEW RUN CODE" 8
+out=$(run normal 2026-11-22); echo "$out" | grep -E "RESULT|restarting|NEW RUN CODE"
+check "run restarted once after pulling, and ran the new code" '[ "$(echo "$out" | grep -c "restarting")" = 1 ] && [ "$(echo "$out" | grep -c "NEW RUN CODE")" = 1 ]'
+check "restarted run completed normally" 'echo "$out" | grep -q "RESULT ok" && [ "$(calls)" = 23 ] && [ "$(origin_q)" = "32 closed 23 23" ] && [ "$(pages_commits)" = 1 ]'
+push_marker "def build_and_publish(repo, data_dir, git, label):" "NEW PUBLISH CODE" 4
+out=$(run mainpublish 2026-11-25); echo "$out" | grep -E "RESULT|restarting|NEW PUBLISH CODE"
+check "manual publish restarted once and ran the new code" '[ "$(echo "$out" | grep -c "restarting")" = 1 ] && [ "$(echo "$out" | grep -c "NEW PUBLISH CODE")" = 1 ] && echo "$out" | grep -q "RESULT ok"'
+out=$(run normal 2026-11-26); echo "$out" | grep -E "RESULT|restarting|already"
+check "no restart when nothing new was pulled" '! echo "$out" | grep -q "restarting" && echo "$out" | grep -q "already collected"'
+
+echo; echo "$PASS passed, $FAIL failed"
+if [ "$FAIL" = 0 ]; then rm -rf "$W"; else echo "test repos kept in $W"; exit 1; fi
