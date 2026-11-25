@@ -3,8 +3,8 @@
 
 Started by systemd through OnFailure= in nyc-rentmap.service, as
 nyc-rentmap-alert.service, which supplies TELEGRAM_BOT_TOKEN and
-TELEGRAM_CHAT_ID. Started while the collection service hasn't failed, it sends
-a test message instead.
+TELEGRAM_CHAT_ID. systemd 251 and later also supply MONITOR_SERVICE_RESULT
+then; started without it, as by hand, it sends a test message instead.
 """
 
 import json
@@ -29,13 +29,11 @@ def log_tail(invocation):
 
 
 def compose(env):
-    failed = subprocess.run(["systemctl", "is-failed", "--quiet", UNIT]).returncode == 0
-    if failed:
-        head = "NYC rent map: the daily run failed"
-        if env.get("MONITOR_SERVICE_RESULT"):
-            head += " (%s, status %s)" % (env["MONITOR_SERVICE_RESULT"], env.get("MONITOR_EXIT_STATUS", "?"))
+    if env.get("MONITOR_SERVICE_RESULT"):
+        head = "NYC rent map: the daily run failed (%s, status %s)" % (
+            env["MONITOR_SERVICE_RESULT"], env.get("MONITOR_EXIT_STATUS", "?"))
     else:
-        head = "NYC rent map: alert test. The last run didn't fail."
+        head = "NYC rent map: alert test."
     return "%s\n\nLast log lines:\n%s" % (head, log_tail(env.get("MONITOR_INVOCATION_ID")))
 
 

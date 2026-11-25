@@ -28,13 +28,15 @@ def check(name, ok):
 
 
 class Host:
-    def __init__(self, unit_failed, journal="docker: run stopped: git fetch failed\nexit 1"):
-        self.unit_failed, self.journal, self.calls = unit_failed, journal, []
+    """A host whose systemctl gets no answer from systemd."""
+
+    def __init__(self, journal="docker: run stopped: git fetch failed\nexit 1"):
+        self.journal, self.calls = journal, []
 
     def run(self, args, **kw):
         self.calls.append(args)
         if args[0] == "systemctl":
-            return Done(0 if self.unit_failed else 1, "", "")
+            return Done(1, "", "Failed to retrieve unit state: Transport endpoint is not connected")
         return Done(0, self.journal, "")
 
 
@@ -59,29 +61,30 @@ def exit_message(fn):
     return None
 
 
-h = Host(True)
+h = Host()
 use(h)
 text = alert.compose({"MONITOR_SERVICE_RESULT": "exit-code", "MONITOR_EXIT_STATUS": "1",
                       "MONITOR_INVOCATION_ID": "abc123"})
-check("failed run: names the result and status",
+check("failed run, with systemctl getting no answer: reported as failed, with the result and status",
       text.startswith("NYC rent map: the daily run failed (exit-code, status 1)"))
 check("failed run: reads that run's own log lines", ["journalctl", "--no-pager", "-o", "cat", "-n", "15",
                                                      "_SYSTEMD_INVOCATION_ID=abc123"] in h.calls)
 check("failed run: includes the log lines", text.endswith("git fetch failed\nexit 1"))
 
-h = Host(True)
+check("failed run: never asks systemctl", not any(c[0] == "systemctl" for c in h.calls))
+
+check("failed run with no exit status: reported as failed",
+      alert.compose({"MONITOR_SERVICE_RESULT": "timeout"}).startswith("NYC rent map: the daily run failed (timeout, status ?)"))
+
+h = Host()
 use(h)
 text = alert.compose({})
-check("older systemd (no MONITOR_ variables): still reports the failure",
-      text.startswith("NYC rent map: the daily run failed\n"))
-check("older systemd: falls back to the service's latest log lines",
+check("started by hand: sends a test message that doesn't say whether the last run failed",
+      text.startswith("NYC rent map: alert test.\n"))
+check("started by hand: shows the service's latest log lines",
       ["journalctl", "--no-pager", "-o", "cat", "-n", "15", "-u", "nyc-rentmap.service"] in h.calls)
 
-use(Host(False))
-check("started by hand with no failure: sends a test message",
-      alert.compose({}).startswith("NYC rent map: alert test."))
-
-use(Host(True, journal="x" * 5000 + "END"))
+use(Host(journal="x" * 5000 + "END"))
 text = alert.compose({})
 tail = text.split("Last log lines:\n", 1)[1]
 check("long logs trimmed to the newest 3500 characters", len(tail) == 3500 and tail.endswith("END"))
