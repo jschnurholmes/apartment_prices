@@ -33,7 +33,7 @@ docstrings in `collect.py` and `rentcast_quota.py`.
 | `$INSTALL_DIR/secrets/telegram.env` | `root`, 600 | `TELEGRAM_BOT_TOKEN=...` and `TELEGRAM_CHAT_ID=...`, for failure alerts |
 | `$INSTALL_DIR/backup` | `$APP_USER` | clone of the private backup repository; the container pushes `<period>.tar.xz` archives here |
 | `$INSTALL_DIR/secrets/backup_key` | `$APP_USER`, 600 | SSH deploy key with write access to the backup repository only |
-| `$INSTALL_DIR/site.env` | `root`, 644 | optional: `RENTMAP_GOATCOUNTER_URL=...`, to count visits with GoatCounter |
+| `$INSTALL_DIR/site.env` | `root`, 644 | optional: `RENTMAP_GOATCOUNTER_URL=...`, to count visits with GoatCounter; `NYC_RENTMAP_ZILLOW_ZIP_RENTS_URL=...` and `NYC_RENTMAP_STREETEASY_RENTALS_URL=...`, to show Zillow and StreetEasy rents |
 | `/usr/local/sbin/nyc-rentmap` | `root` | wrapper that starts the container (installed copy of `nyc/deploy/nyc-rentmap`) |
 | `/usr/local/sbin/nyc-rentmap-alert` | `root` | sends a Telegram message when a run fails (installed copy of `nyc/deploy/nyc-rentmap-alert`) |
 | `/etc/systemd/system/nyc-rentmap.{service,timer}`, `nyc-rentmap-alert.service` | `root` | installed copies of `nyc/deploy/` |
@@ -294,6 +294,18 @@ at least that.
 
     Every build then adds GoatCounter's script to the pages. To stop
     counting, delete `site.env` and run `sudo nyc-rentmap publish` again.
+14. Optionally, show Zillow's rents by ZIP code and StreetEasy's rents by
+    neighborhood. Each is off until its address is in `site.env`, and either
+    works without the other. Add both and republish:
+
+    ```bash
+    printf '%s\n' 'NYC_RENTMAP_ZILLOW_ZIP_RENTS_URL=https://files.zillowstatic.com/research/public_csvs/zori/Zip_zori_uc_sfrcondomfr_sm_month.csv' 'NYC_RENTMAP_STREETEASY_RENTALS_URL=https://cdn-charts.streeteasy.com/rentals' | sudo tee -a $INSTALL_DIR/site.env
+    sudo nyc-rentmap publish
+    ```
+
+    The data is downloaded once per billing period, and again if an address
+    changes. To stop showing either one, remove its line from `site.env` and
+    run `sudo nyc-rentmap publish` again.
 
 ## Updating the server
 
