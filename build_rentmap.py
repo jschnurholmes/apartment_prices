@@ -17,6 +17,9 @@ of site/*.html and housing_mask.png.
 If RENTMAP_GOATCOUNTER_URL is set (https://CODE.goatcounter.com/count), the
 copied pages get GoatCounter's counting script.
 
+If RENTMAP_GOOGLE_MAPS_KEY is set, the map is drawn on Google Maps with that
+Maps JavaScript API key, which visitors can see; otherwise on OpenStreetMap.
+
 Each month depends only on scrapes up to that month, so existing outputs are
 reused unless the model parameters changed or --force is given.  A month is
 written atomically (temp file + rename) so a crash never leaves a half-written
@@ -175,6 +178,12 @@ def analytics_tag(url):
             % html.escape(url)).encode()
 
 
+def google_maps_key(key):
+    if not re.fullmatch(r"[A-Za-z0-9_-]*", key):
+        sys.exit("RENTMAP_GOOGLE_MAPS_KEY must be only letters, digits, - and _")
+    return {"google_maps_key": key} if key else {}
+
+
 def main(argv):
     force = "--force" in argv
     args = [a for a in argv if not a.startswith("--")]
@@ -184,6 +193,7 @@ def main(argv):
     data_dir, out_dir = args
     os.makedirs(out_dir, exist_ok=True)
     analytics = analytics_tag(os.environ.get("RENTMAP_GOATCOUNTER_URL", "").strip())
+    maps_key = google_maps_key(os.environ.get("RENTMAP_GOOGLE_MAPS_KEY", "").strip())
 
     t0 = time.time()
     ds = rentmap.Dataset(data_dir)
@@ -204,8 +214,8 @@ def main(argv):
     shutil.copy(os.path.join(HERE, rentmap.CITY["mask"]),
                 os.path.join(out_dir, "housing_mask.png"))
     atomic_write(os.path.join(out_dir, "city.json"), json.dumps(
-        {k: rentmap.CITY[k] for k in ("name", "bounds", "center", "zoom", "map_px", "dollar_buckets",
-                                      "source") if k in rentmap.CITY}))
+        dict({k: rentmap.CITY[k] for k in ("name", "bounds", "center", "zoom", "map_px", "dollar_buckets",
+                                           "source") if k in rentmap.CITY}, **maps_key)))
     print("built %d months in %.0fs" % (len(dates), time.time() - t0))
 
 

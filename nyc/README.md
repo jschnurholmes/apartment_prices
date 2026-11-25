@@ -33,7 +33,7 @@ docstrings in `collect.py` and `rentcast_quota.py`.
 | `$INSTALL_DIR/secrets/telegram.env` | `root`, 600 | `TELEGRAM_BOT_TOKEN=...` and `TELEGRAM_CHAT_ID=...`, for failure alerts |
 | `$INSTALL_DIR/backup` | `$APP_USER` | clone of the private backup repository; the container pushes `<period>.tar.xz` archives here |
 | `$INSTALL_DIR/secrets/backup_key` | `$APP_USER`, 600 | SSH deploy key with write access to the backup repository only |
-| `$INSTALL_DIR/site.env` | `root`, 644 | optional: `RENTMAP_GOATCOUNTER_URL=...`, to count visits with GoatCounter; `NYC_RENTMAP_ZILLOW_ZIP_RENTS_URL=...` and `NYC_RENTMAP_STREETEASY_RENTALS_URL=...`, to show Zillow and StreetEasy rents |
+| `$INSTALL_DIR/site.env` | `root`, 644 | optional: `RENTMAP_GOATCOUNTER_URL=...`, to count visits with GoatCounter; `NYC_RENTMAP_ZILLOW_ZIP_RENTS_URL=...` and `NYC_RENTMAP_STREETEASY_RENTALS_URL=...`, to show Zillow and StreetEasy rents; `RENTMAP_GOOGLE_MAPS_KEY=...`, to draw the map on Google Maps |
 | `/usr/local/sbin/nyc-rentmap` | `root` | wrapper that starts the container (installed copy of `nyc/deploy/nyc-rentmap`) |
 | `/usr/local/sbin/nyc-rentmap-alert` | `root` | sends a Telegram message when a run fails (installed copy of `nyc/deploy/nyc-rentmap-alert`) |
 | `/etc/systemd/system/nyc-rentmap.{service,timer}`, `nyc-rentmap-alert.service` | `root` | installed copies of `nyc/deploy/` |
@@ -307,6 +307,35 @@ at least that.
     The data is downloaded once per billing period, and again if an address
     changes. To stop showing either one, remove its line from `site.env` and
     run `sudo nyc-rentmap publish` again.
+15. Optionally, draw the map on Google Maps instead of OpenStreetMap. Each
+    time someone opens the map page counts as one map load; see
+    [Google's prices](https://developers.google.com/maps/billing-and-pricing/pricing)
+    for Dynamic Maps. Visitors can see the key, and it is published on the
+    `gh-pages` branch, so limit what it can do:
+
+    1. Open [Maps JavaScript API](https://console.cloud.google.com/apis/library/maps-backend.googleapis.com)
+       in the Google Cloud console, choose a project, and click **Enable**.
+    2. On [Keys & Credentials](https://console.cloud.google.com/projectselector/google/maps-apis/credentials),
+       click **Create credentials > API key**. In **Select API restrictions**,
+       leave only **Maps JavaScript API** selected, and click **Create**.
+    3. Click the key's name. Under **Key restrictions**, select **Set an
+       application restriction**, choose **Websites**, add your site's
+       address, like `https://example.com`, and click **Save**.
+    4. On [Quotas](https://console.cloud.google.com/project/_/google/maps-apis/quotas),
+       lower the Maps JavaScript API's quota for map loads per day to what
+       you are willing to pay for. Google's free monthly loads divided by 31
+       stays free; go slightly lower, since its quota and billing counts can
+       differ.
+    5. Add the key, which this asks for without showing it, and republish:
+
+       ```bash
+       read -rsp 'Google Maps key: ' KEY; echo; printf 'RENTMAP_GOOGLE_MAPS_KEY=%s\n' "$KEY" | sudo tee -a $INSTALL_DIR/site.env > /dev/null
+       sudo nyc-rentmap publish
+       ```
+
+    If Google rejects the key, the page falls back to OpenStreetMap. To go
+    back to OpenStreetMap, remove the key's line from `site.env` and run
+    `sudo nyc-rentmap publish` again.
 
 ## Updating the server
 
@@ -573,7 +602,7 @@ nyc/tests/run_tests.sh analytics backup
 | `scrape` | room-rental and duplicate filtering | 1 s |
 | `refilter` | rewriting scrapes and rebuilding when the filter changes | 20 s |
 | `backup` | backup archives, retries and restore | 25 s |
-| `analytics` | the optional GoatCounter tag | 20 s |
+| `analytics` | the optional GoatCounter tag and Google Maps key | 20 s |
 | `market` | downloading, checking and building the optional Zillow and StreetEasy data | 90 s |
 
 The `NYC tests` GitHub Actions workflow runs the full suite on Python 3.11

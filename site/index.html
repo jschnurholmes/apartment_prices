@@ -165,6 +165,7 @@ const SIGMA_FULL = 700, SIGMA_ZERO = 1500;   // meters
 const state = { dates: [], idx: 0, size: 2, mode: "nominal", cmpIdx: 0, cmpReal: true,
                 opacity: 0.75, fade: true, mask: true, dots: false, src: "map", se: false };
 let MARKET = [];        // which of Zillow's and StreetEasy's data this site has
+let googleKey = null;
 let zillow = null, streeteasy = null;
 const timelines = {};   // src -> {dates, idx, cmpIdx} while the other one is showing
 const cache = {};       // date -> {meta, logv: Float32Array, neff: Uint8Array, dots}
@@ -180,6 +181,7 @@ async function applyCity() {
   if (c.dollar_buckets) DOLLAR_BUCKETS = c.dollar_buckets;
   canvas.width = W; canvas.height = H;
   MARKET = c.market || [];
+  googleKey = c.google_maps_key || null;
   document.title = c.name + " Rent Map";
   document.querySelector("h1").textContent = c.name + " rent map";
 }
@@ -596,7 +598,7 @@ function popupFor(lat, lng) {
   return wrap;
 }
 
-// ---- basemaps: Google Maps (as on the live site), falling back to Leaflet/OSM
+// ---- basemaps: Google Maps if the site has a key, otherwise Leaflet/OSM
 function googleBasemap() {
   const map = new google.maps.Map(document.getElementById("map"), {
     zoom: ZOOM, center: CENTER, clickableIcons: false, gestureHandling: "greedy" });
@@ -692,11 +694,11 @@ async function useLeaflet() {
 
 async function initBasemap() {
   const forceLeaflet = new URLSearchParams(location.search).has("leaflet");
-  if (forceLeaflet) return useLeaflet();
+  if (forceLeaflet || !googleKey) return useLeaflet();
   try {
     let failed = false;
     window.gm_authFailure = () => { failed = true; useLeaflet().then(render); };
-    await loadScript("https://maps.googleapis.com/maps/api/js?key=AIzaSyALrS4bNPhHaZ73dACaSxD-r6oht4CX7B8");
+    await loadScript("https://maps.googleapis.com/maps/api/js?key=" + googleKey);
     if (!failed) basemap = googleBasemap();
   } catch (e) {
     await useLeaflet();

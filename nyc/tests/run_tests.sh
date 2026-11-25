@@ -296,6 +296,18 @@ check "a malformed URL stops the build before publishing" 'echo "$out" | grep -q
 out=$(run publish 2026-11-25); echo "$out" | grep -E "RESULT|gh-pages"
 check "unsetting it republishes the original files" '[ "$(git -C "$W/origin.git" rev-parse gh-pages)" != "$with" ] && [ "$(git -C "$W/origin.git" rev-parse "gh-pages^{tree}")" = "$before_tree" ] && ! pages_file index.html | grep -q goatcounter'
 check "wrapper script parses" 'sh -n "$REPO/nyc/deploy/nyc-rentmap"'
+echo "=== analytics: Google Maps key used only when configured ==="
+city_key() { pages_file city.json | "$PY" -I -c 'import json, sys; print(json.load(sys.stdin).get("google_maps_key"))'; }
+before=$(git -C "$W/origin.git" rev-parse gh-pages)
+check "without a key, city.json has none and the pages carry no Google key" '[ "$(city_key)" = None ] && ! (pages_file index.html; pages_file trends.html) | grep -q "AIza"'
+out=$(RENTMAP_GOOGLE_MAPS_KEY=AIzaTest_key-123 run publish 2026-11-25); echo "$out" | grep -E "RESULT|gh-pages"
+check "setting the key republishes it in city.json without a full rebuild" 'echo "$out" | grep -q "RESULT ok" && [ "$(city_key)" = AIzaTest_key-123 ] && ! echo "$out" | grep -q "rebuilding every month"'
+check "the pages themselves don't change" 'git -C "$W/origin.git" diff --quiet "$before" gh-pages -- index.html trends.html'
+with=$(git -C "$W/origin.git" rev-parse gh-pages)
+out=$(RENTMAP_GOOGLE_MAPS_KEY='AIza"</script>' run publish 2026-11-25); echo "$out" | grep -E "RESULT"
+check "a malformed key stops the build before publishing" 'echo "$out" | grep -q "RESULT stopped: site build failed: RENTMAP_GOOGLE_MAPS_KEY must be" && [ "$(git -C "$W/origin.git" rev-parse gh-pages)" = "$with" ]'
+out=$(run publish 2026-11-25); echo "$out" | grep -E "RESULT|gh-pages"
+check "unsetting it republishes the site without the key" '[ "$(git -C "$W/origin.git" rev-parse "gh-pages^{tree}")" = "$before_tree" ] && [ "$(city_key)" = None ]'
 
 }
 
