@@ -322,10 +322,13 @@ at least that.
        application restriction**, choose **Websites**, add your site's
        address, like `https://example.com`, and click **Save**.
     4. On [Quotas](https://console.cloud.google.com/project/_/google/maps-apis/quotas),
-       lower the Maps JavaScript API's quota for map loads per day to what
-       you are willing to pay for. Google's free monthly loads divided by 31
-       stays free; go slightly lower, since its quota and billing counts can
-       differ.
+       try to lower the Maps JavaScript API's quota for map loads per day to
+       what you are willing to pay for. Google's free monthly loads divided by
+       31 stays free; go slightly lower, since its quota and billing counts can
+       differ. In some projects **Edit quota** is grayed out with "Quota is not
+       adjustable." Then nothing caps what the key can cost, because the
+       website restriction only checks the address a request claims to come
+       from, which a script can fake.
     5. Add the key, which this asks for without showing it, and republish:
 
        ```bash
