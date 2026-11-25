@@ -288,12 +288,13 @@ at least that.
     stays out of this repository, and republish:
 
     ```bash
-    echo 'RENTMAP_GOATCOUNTER_URL=https://CODE.goatcounter.com/count' | sudo tee $INSTALL_DIR/site.env
+    echo 'RENTMAP_GOATCOUNTER_URL=https://CODE.goatcounter.com/count' | sudo tee -a $INSTALL_DIR/site.env
     sudo nyc-rentmap publish
     ```
 
     Every build then adds GoatCounter's script to the pages. To stop
-    counting, delete `site.env` and run `sudo nyc-rentmap publish` again.
+    counting, remove its line from `site.env` and run
+    `sudo nyc-rentmap publish` again.
 14. Optionally, show Zillow's rents by ZIP code and StreetEasy's rents by
     neighborhood. Each is off until its address is in `site.env`, and either
     works without the other. Add both and republish:
