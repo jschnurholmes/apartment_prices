@@ -41,6 +41,24 @@ def zip_at(lat, lon):
     return z and z["zip"]
 
 
+areas = collect.city_areas.load(os.path.join(os.path.dirname(HERE), "..", "cities", "nyc_areas.json"))
+CITY_ZIPS = ("100", "101", "102", "103", "104", "111", "112", "113", "114", "116", "11004", "11005")
+
+
+def without_municipality():
+    """Included ZIPs outside the five boroughs with under 1% of their area in an included municipality."""
+    out = []
+    for z in zips:
+        if z["zip"].startswith(CITY_ZIPS):
+            continue
+        x0, y0, x1, y1 = z["bbox"]
+        pts = [(x0 + (x1 - x0) * (i + 0.5) / 100, y0 + (y1 - y0) * (j + 0.5) / 100) for i in range(100) for j in range(100)]
+        pts = [p for p in pts if collect.city_areas.find([z], *p)]
+        if sum(1 for p in pts if collect.city_areas.find(areas, *p)) < 0.01 * len(pts):
+            out.append(z["zip"])
+    return out
+
+
 ZIP_CHECKS = [("%s is in an included ZIP" % name, lambda lat=lat, lon=lon: zip_at(lat, lon) is not None)
               for name, st, co, lat, lon, want in POINTS if want]
 ZIP_CHECKS += [
@@ -49,6 +67,11 @@ ZIP_CHECKS += [
     ("Bayonne's ZIP isn't included", lambda: "07002" not in zip_codes and zip_at(40.6687, -74.1143) is None),
     ("Kearny's ZIP isn't included", lambda: "07032" not in zip_codes and zip_at(40.7684, -74.1454) is None),
     ("Yonkers isn't in an included ZIP", lambda: zip_at(40.9312, -73.8988) is None),
+    ("no Westchester ZIP is included", lambda: [z for z in zip_codes if z[:3] in ("105", "106", "107", "108")] == []),
+    ("Mount Vernon isn't in an included ZIP", lambda: zip_at(40.9126, -73.8371) is None),
+    ("Pelham isn't in an included ZIP", lambda: zip_at(40.9098, -73.8079) is None),
+    ("ZIPs with only a few blocks of an included village aren't included", lambda: not zip_codes & {"11010", "11557", "11563"}),
+    ("every ZIP outside the five boroughs has an included municipality in it", lambda: without_municipality() == []),
     ("a partly covered ZIP is whole: New Hyde Park's part of 11040 outside our areas", lambda: zip_at(40.7473, -73.6631) == "11040"
      and not flt.keep({"stateFips": "36", "countyFips": "059", "latitude": 40.7473, "longitude": -73.6631})),
     ("home counts match the housing mask's 4,000,922 to within 100", lambda: abs(sum(z["units"] for z in zips) - 4000922) < 100),

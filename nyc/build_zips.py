@@ -1,9 +1,9 @@
-"""Write cities/nyc_zips.json: Census ZIP areas with homes where the collector keeps listings.
+"""Write cities/nyc_zips.json: Census ZIP areas of the NYC counties and the city's included municipalities.
 
-A ZIP is included, whole, if any 2020 block with housing lies in it and in the
-NYC counties or one of the city's areas (by the block's interior point). Its
-"units" counts only those blocks' homes. Boundaries are simplified like
-build_areas.py's.
+A ZIP is included, whole, if most of its homes are in the NYC counties or at
+least MIN_SHARE of them are in the included municipalities, by its 2020 blocks'
+interior points. Its "units" counts only the homes in either. Boundaries are
+simplified like build_areas.py's.
 
 usage: python3 -I nyc/build_zips.py --zctas GEOJSON --blocks SHP...
   GEOJSON: 2020 ZIP Code Tabulation Areas from TIGERweb's
@@ -26,11 +26,16 @@ import build_areas
 import city_areas
 
 OUT = os.path.join(ROOT, "cities", "nyc_zips.json")
+MIN_SHARE = 0.01
 
 
 def rings(geometry):
     polys = [geometry["coordinates"]] if geometry["type"] == "Polygon" else geometry["coordinates"]
     return [[tuple(p[:2]) for p in ring] for poly in polys for ring in poly]
+
+
+def included(total, city, municipal):
+    return city > total / 2 or (municipal > 0 and municipal >= total * MIN_SHARE)
 
 
 def main(argv):
@@ -42,7 +47,7 @@ def main(argv):
     for feat in features:
         r = rings(feat["geometry"])
         xs, ys = [x for ring in r for x, _ in ring], [y for ring in r for _, y in ring]
-        zips.append({"zip": feat["properties"]["ZCTA5"], "units": 0, "rings": r,
+        zips.append({"zip": feat["properties"]["ZCTA5"], "total": 0, "city": 0, "municipal": 0, "rings": r,
                      "bbox": (min(xs), min(ys), max(xs), max(ys))})
     areas = city_areas.load(os.path.join(ROOT, "cities", "nyc_areas.json"))
     homes = unplaced = 0
@@ -55,18 +60,23 @@ def main(argv):
             if rec[ihu] <= 0:
                 continue
             lon, lat = float(rec[ilon]), float(rec[ilat])
-            if rec[ist] + rec[ico] not in build_areas.NYC_COUNTIES and not city_areas.find(areas, lon, lat):
-                continue
-            homes += rec[ihu]
             z = city_areas.find(zips, lon, lat)
             if z:
-                z["units"] += rec[ihu]
+                z["total"] += rec[ihu]
+            if rec[ist] + rec[ico] in build_areas.NYC_COUNTIES:
+                kind = "city"
+            elif city_areas.find(areas, lon, lat):
+                kind = "municipal"
+            else:
+                continue
+            homes += rec[ihu]
+            if z:
+                z[kind] += rec[ihu]
             else:
                 unplaced += rec[ihu]
-    kept = sorted((z for z in zips if z["units"] > 0), key=lambda z: z["zip"])
-    for z in kept:
-        del z["bbox"]
-        z["rings"] = [[(round(x, 5), round(y, 5)) for x, y in build_areas.simplify(ring)] for ring in z["rings"]]
+    kept = [{"zip": z["zip"], "units": z["city"] + z["municipal"],
+             "rings": [[(round(x, 5), round(y, 5)) for x, y in build_areas.simplify(ring)] for ring in z["rings"]]}
+            for z in sorted(zips, key=lambda z: z["zip"]) if included(z["total"], z["city"], z["municipal"])]
     with open(OUT + ".tmp", "w") as f:
         json.dump({"zips": kept}, f, separators=(",", ":"))
     os.replace(OUT + ".tmp", OUT)
