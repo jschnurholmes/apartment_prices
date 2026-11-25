@@ -569,11 +569,12 @@ nyc/tests/run_tests.sh analytics backup
 | `failures` | crash and resume, HTTP 403, GitHub unreachable before collecting | 35 s |
 | `restart` | restarting onto code pulled during a run | 20 s |
 | `alert` | the Telegram alert script | 1 s |
-| `areas` | the municipal-area filter on real boundaries | 1 s |
+| `areas` | the municipal-area filter on real boundaries, the included ZIP areas and the StreetEasy neighborhood positions | 5 s |
 | `scrape` | room-rental and duplicate filtering | 1 s |
 | `refilter` | rewriting scrapes and rebuilding when the filter changes | 20 s |
 | `backup` | backup archives, retries and restore | 25 s |
 | `analytics` | the optional GoatCounter tag | 20 s |
+| `market` | downloading, checking and building the optional Zillow and StreetEasy data | 90 s |
 
 The `NYC tests` GitHub Actions workflow runs the full suite on Python 3.11
 with the image's pinned packages after every push to `master`, except pushes
