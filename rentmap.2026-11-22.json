@@ -1,0 +1,207 @@
+{
+ "date": "2026-11-22",
+ "ts": 1795356989,
+ "params": {
+  "version": 3,
+  "K_MASS": 8,
+  "HALF_LIFE_DAYS": 120,
+  "WINDOW_DAYS": 365,
+  "SIGMA_LEVELS_M": [
+   100.0,
+   130.0,
+   169.0,
+   219.7,
+   285.6,
+   371.3,
+   482.7,
+   627.5,
+   815.7,
+   1060.4,
+   1378.6,
+   1792.2,
+   2329.8,
+   3028.8
+  ],
+  "BUILDING_ROUND": 4,
+  "BUILDING_POWER": 1.0,
+  "TRIM_SIGMAS": 4,
+  "OFFSET_PRIOR_W": 3,
+  "BACKFIT_ITERS": 4,
+  "MAP_PX": 2000,
+  "FIT_PX": 500,
+  "ID_LOOKBACK_DAYS": 180,
+  "LOCPRICE_LOOKBACK_DAYS": 120,
+  "ADDRESS_LOOKBACK_DAYS": 120,
+  "MIN_FULL_SCRAPE": 1000,
+  "BAD_SCRAPES": [
+   1384776122,
+   1385024431,
+   1387368122,
+   1390046522,
+   1437184922
+  ],
+  "VALUE_STEP": 0.0025,
+  "SUMMARY_WEIGHTING": "housing_units"
+ },
+ "n_listed": 8657,
+ "n_new": 8657,
+ "n_window": 8657,
+ "n_trimmed": 81,
+ "raw_json": false,
+ "bedroom_mult": {
+  "0": 0.5986,
+  "1": 0.7442,
+  "2": 1.0,
+  "3": 1.2591,
+  "4": 1.4745,
+  "5": 1.8441,
+  "6": 2.1418
+ },
+ "period_offsets": {
+  "2026-11-22": 0.0
+ },
+ "city_2br": 3107,
+ "places_2br": {
+  "Inwood": 3279,
+  "Washington Heights": 2903,
+  "Harlem": 4177,
+  "East Harlem": 4274,
+  "Upper West Side": 6353,
+  "Upper East Side": 8146,
+  "Midtown": 7639,
+  "Chelsea": 7735,
+  "Murray Hill": 6314,
+  "Greenwich Village": 8751,
+  "East Village": 5882,
+  "Lower East Side": 6352,
+  "Financial District": 6316,
+  "Greenpoint": 6667,
+  "Williamsburg": 7038,
+  "Bushwick": 3785,
+  "Bed-Stuy": 4327,
+  "Fort Greene": 7067,
+  "Brooklyn Heights": 6722,
+  "Park Slope": 5210,
+  "Prospect Heights": 5621,
+  "Crown Heights": 4357,
+  "Flatbush": 3463,
+  "Sunset Park": 2782,
+  "Bay Ridge": 3178,
+  "Bensonhurst": 2490,
+  "Sheepshead Bay": 3136,
+  "Brighton Beach": 2598,
+  "Astoria": 3773,
+  "Long Island City": 5910,
+  "Sunnyside": 3240,
+  "Jackson Heights": 2861,
+  "Elmhurst": 2846,
+  "Flushing": 3683,
+  "Forest Hills": 3520,
+  "Ridgewood": 3327,
+  "Jamaica": 3138,
+  "Mott Haven": 3358,
+  "Concourse": 3350,
+  "Fordham": 2532,
+  "Riverdale": 3281,
+  "St. George": 2757,
+  "Jersey City": 2864,
+  "Hoboken": 3966,
+  "Union City": 2539,
+  "North Bergen": 2747,
+  "West New York": 2716,
+  "Fort Lee": 3621,
+  "Cliffside Park": 2680,
+  "Secaucus": 3044,
+  "Weehawken": 4007,
+  "Carteret": 2234,
+  "Palisades Park": 2948,
+  "Edgewater": 3256,
+  "Fairview": 2762,
+  "Ridgefield Park": 2517,
+  "Guttenberg": 2669,
+  "Valley Stream": 3004,
+  "Floral Park": 3066
+ },
+ "new_stats": {
+  "0": {
+   "n": 1194,
+   "p25": 3100,
+   "median": 3695,
+   "p75": 4295
+  },
+  "1": {
+   "n": 3333,
+   "p25": 2825,
+   "median": 4000,
+   "p75": 5245
+  },
+  "2": {
+   "n": 2693,
+   "p25": 3135,
+   "median": 4500,
+   "p75": 6545
+  },
+  "3": {
+   "n": 1200,
+   "p25": 3200,
+   "median": 3999,
+   "p75": 6900
+  },
+  "4": {
+   "n": 197,
+   "p25": 3700,
+   "median": 5000,
+   "p75": 9500
+  },
+  "5": {
+   "n": 33,
+   "p25": 4500,
+   "median": 7500,
+   "p75": 10000
+  }
+ },
+ "all_stats": {
+  "0": {
+   "n": 1194,
+   "p25": 3100,
+   "median": 3695,
+   "p75": 4295
+  },
+  "1": {
+   "n": 3333,
+   "p25": 2825,
+   "median": 4000,
+   "p75": 5245
+  },
+  "2": {
+   "n": 2693,
+   "p25": 3135,
+   "median": 4500,
+   "p75": 6545
+  },
+  "3": {
+   "n": 1200,
+   "p25": 3200,
+   "median": 3999,
+   "p75": 6900
+  },
+  "4": {
+   "n": 197,
+   "p25": 3700,
+   "median": 5000,
+   "p75": 9500
+  },
+  "5": {
+   "n": 33,
+   "p25": 4500,
+   "median": 7500,
+   "p75": 10000
+  }
+ },
+ "encoding": {
+  "log_lo": 5.521460917862246,
+  "step": 0.0025,
+  "sigma0_m": 100,
+  "sigma_ratio": 1.3
+ }
+}
