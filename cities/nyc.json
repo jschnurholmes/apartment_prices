@@ -1,5 +1,6 @@
 {
   "name": "NYC",
+  "source_name": "RentCast",
   "source": "From monthly pulls of RentCast rental listings since November 2026",
   "bounds": {
     "south": 40.4916,

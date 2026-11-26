@@ -215,7 +215,7 @@ def main(argv):
                 os.path.join(out_dir, "housing_mask.png"))
     atomic_write(os.path.join(out_dir, "city.json"), json.dumps(
         dict({k: rentmap.CITY[k] for k in ("name", "bounds", "center", "zoom", "map_px", "dollar_buckets",
-                                           "source") if k in rentmap.CITY}, **maps_key)))
+                                           "source", "source_name") if k in rentmap.CITY}, **maps_key)))
     print("built %d months in %.0fs" % (len(dates), time.time() - t0))
 
 

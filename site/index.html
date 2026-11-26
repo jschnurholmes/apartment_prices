@@ -62,7 +62,7 @@
   <div id="src-wrap" style="display:none">
     <label for="src">Data</label>
     <select id="src">
-      <option value="map">Rent map</option>
+      <option value="map">Listings</option>
       <option value="zillow">Zillow rents by ZIP code</option>
     </select>
   </div>
@@ -115,7 +115,7 @@
   <div id="credit" style="display:none; margin-top:6px; font-size:12px; color:var(--text-2)">Data Provided by Zillow Group</div>
   <div id="links"><a href="trends.html">Trends</a><a href="/">Main site</a><a href="#" id="about-link">About</a></div>
   <div id="about" style="display:none; font-size:12px; color:var(--text-2); margin-top:6px">
-    Each month's map pools new listings from the past year (weighted toward
+    Each month's listings estimate pools new listings from the past year (weighted toward
     recent months and adjusted for citywide price changes), counting each
     listing once when it first appears.  Prices are a weighted average of
     nearby listings, using the smallest radius with enough data.  Sizes differ
@@ -123,7 +123,7 @@
     Click anywhere for the estimate at that spot.
     <span id="about-zillow" style="display:none"><br><br>Zillow's layer is its rent index for each
     ZIP code, covering houses, condos and apartments of every size together, so
-    it isn't comparable dollar for dollar with the rent map.  Each ZIP code is
+    it isn't comparable dollar for dollar with <span class="source-listings">listings</span>.  Each ZIP code is
     colored whole, drawn from Census approximations of postal boundaries.
     "Relative to the city" compares with the typical home across these ZIP
     codes.</span>
@@ -184,6 +184,10 @@ async function applyCity() {
   googleKey = c.google_maps_key || null;
   document.title = c.name + " Rent Map";
   document.querySelector("h1").textContent = c.name + " rent map";
+  if (c.source_name) {
+    document.querySelector('#src option[value="map"]').textContent = c.source_name + " listings";
+    for (const s of document.querySelectorAll(".source-listings")) s.textContent = c.source_name + " listings";
+  }
 }
 
 function hexToRgb(h) { const n = parseInt(h.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; }
@@ -541,7 +545,7 @@ function drawSummary(cur) {
   add("Typical " + SIZE_NAMES[state.size] + " citywide: "); add(money(city), true);
   if (state.mode === "real") { add(" ("); add(money(city * realFactor(m.date)), true); add(" today)"); }
   el.append(document.createElement("br"));
-  add(m.n_new.toLocaleString() + " new listings this month, " + m.n_listed.toLocaleString() + " on the market; the map pools " + m.n_window.toLocaleString() + " from the past year.");
+  add(m.n_new.toLocaleString() + " new listings this month, " + m.n_listed.toLocaleString() + " on the market; the listings estimate pools " + m.n_window.toLocaleString() + " from the past year.");
   if (state.mode !== "nominal" && trends && trends.cpi_latest_month) {
     el.append(document.createElement("br"));
     add("Today's dollars = CPI-U as of " + trends.cpi_latest_month + ".");

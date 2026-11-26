@@ -119,8 +119,8 @@
 
   <section class="card">
     <h2 id="t-typical">Typical rent</h2>
-    <p class="note">The map estimate is the median over every home in the area (2020 Census
-      housing units) of the map's price at that spot, so a month with unusually
+    <p class="note">The listings estimate is the median over every home in the area (2020 Census
+      housing units) of the local estimate at that home, so a month with unusually
       many listings in pricey areas doesn't read as a price rise.  It sits below
       the listing medians because listings are concentrated in pricier
       neighborhoods.  The two medians are raw: listings that are new that
@@ -132,7 +132,7 @@
 
   <section class="card">
     <h2>Size premium at the same location</h2>
-    <p class="note">Rent of each size relative to a 2BR on the same block, estimated jointly with the map.</p>
+    <p class="note">Rent of each size relative to a 2BR on the same block, estimated jointly with the listings estimate.</p>
     <div class="legend" id="lg-mult"></div>
     <div class="chart" id="c-mult"></div>
   </section>
@@ -147,16 +147,16 @@
 
   <section class="card">
     <h2 id="t-places">By neighborhood</h2>
-    <p class="note">Map estimate averaged over homes within 300m of each spot, on a shared scale,
+    <p class="note">Listings estimate averaged over homes within 300m of each spot, on a shared scale,
       sorted by the latest value.  Gaps are months without enough nearby data.</p>
     <div class="multiples" id="c-places"></div>
   </section>
 
   <div id="market" hidden>
     <h2>Longer history from StreetEasy</h2>
-    <p class="sub">StreetEasy's own listings, separate from the data behind the rent map. Like the listing
+    <p class="sub">StreetEasy's own listings, separate from the <span class="source-listings">listings</span>. Like the listing
       medians above, its medians describe what's listed, which concentrates in pricier neighborhoods, so they
-      run above the map estimate.  Data Provided by Zillow Group.</p>
+      run above the listings estimate.  Data Provided by Zillow Group.</p>
 
     <section class="card">
       <h2 id="t-index">Rent index</h2>
@@ -368,7 +368,7 @@ function render() {
 
   document.getElementById("t-typical").textContent = "Typical " + SIZE_NAMES[state.size] + " rent" + dollars;
   const typical = [
-    { name: "Map estimate", color: S(1), values: pick(T.city_2br, (v, i) => v * T.bedroom_mult[b][i] * rf(i)) },
+    { name: "Listings estimate", color: S(1), values: pick(T.city_2br, (v, i) => v * T.bedroom_mult[b][i] * rf(i)) },
     { name: "Median new listing", color: S(2), values: pick(T.new_median[b], (v, i) => v * rf(i)) },
     { name: "Median of all listed", color: S(3), values: pick(T.all_median[b], (v, i) => v * rf(i)) },
   ];
@@ -412,7 +412,7 @@ function render() {
 
   // table view
   const tbl = document.createElement("table");
-  const head = ["Month", "Map estimate", "Median new", "Median all", "Listed", "New", "CPI-U"];
+  const head = ["Month", "Listings estimate", "Median new", "Median all", "Listed", "New", "CPI-U"];
   const thead = tbl.createTHead().insertRow();
   head.forEach(t => { const th = document.createElement("th"); th.textContent = t; thead.append(th); });
   const tb = tbl.createTBody();
@@ -546,6 +546,7 @@ fetch("city.json").then(r => r.ok ? r.json() : null).then(c => {
   document.querySelector("h1").textContent = c.name + " rent trends";
   if ((c.market || []).includes("streeteasy")) loadMarket();
   if (c.source) document.querySelector("p.sub").firstChild.textContent = c.source + ", the same data behind the ";
+  if (c.source_name) for (const s of document.querySelectorAll(".source-listings")) s.textContent = c.source_name + " listings";
 }).catch(() => {});
 
 fetch("trends.json").then(r => r.json()).then(t => {
